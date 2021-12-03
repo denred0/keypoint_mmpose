@@ -27,20 +27,20 @@ input_range = [0, 1]  # Parameter for preprocessing function
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 
-pose_config = 'configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py'
-pose_checkpoint = 'work_dirs/res50_coco_256x192/epoch_5.pth'
+# pose_config = 'configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py'
+# pose_checkpoint = 'work_dirs/res50_coco_256x192/epoch_5.pth'
 
 # keypoint_dataset = 'data/inference/input'
 # keypoint_inference = 'data/inference/output'
 
-image_path = "data/inference/onnx/input/img_2_box.png"
-input_size = [192, 256]
+image_path = "data/inference/base/input/image_3-V211124-30fps-1_50-max10cm_00001.jpg"
+input_size = [540, 960] #[192, 256]
 
-pose_model = cv2.dnn.readNetFromONNX("mmpose_keypoint.onnx")
+det_model = cv2.dnn.readNetFromONNX("mmdet_cascade_rcnn_r50_fpn_1x_coco.onnx")
 
 if cv2.cuda.getCudaEnabledDeviceCount():
-    pose_model.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-    pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+    det_model.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+    det_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
     # pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
 image_orig = cv2.imread(image_path)
@@ -54,11 +54,11 @@ input_blob = np.moveaxis(test_image, -1, 0)  # Change shape from [height, width,
 input_blob = input_blob[np.newaxis, :, :,
              :]  # Add "batch size" dimension. From [channels, height, width] to [batch_size, channels, height, width]
 
-pose_model.setInput(input_blob)  # Set input of model
+det_model.setInput(input_blob)  # Set input of model
 start = time()
 iterations = 1000
 for i in range(iterations):
-    out = pose_model.forward()  # Get model prediction
+    out = det_model.forward()  # Get model prediction
 
 taken = time() - start
 print("FPS ONNX: {:.1f} samples".format(iterations / taken))

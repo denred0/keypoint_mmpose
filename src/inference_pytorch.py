@@ -100,20 +100,20 @@ def _xyxy2xywh(bbox_xyxy):
 
 flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16]]
 
-pose_config = 'configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py'
-pose_checkpoint = 'work_dirs/res50_coco_256x192/epoch_5.pth'
+pose_config = 'configs_mmpose/face/2d_kpt_sview_rgb_img/topdown_heatmap/coco_wholebody_face/res50_coco_wholebody_face_256x256.py'
+pose_checkpoint = 'pretrained_weights/mmpose/face/res50_coco_wholebody_face_256x256-5128edf5_20210909.pth'
 
 keypoint_dataset = 'data/inference/pytorch/input/'
 keypoint_inference = 'data/inference/pytorch/output/'
 
-image_path = "data/inference/pytorch/input/img_2.png"
-input_size = [192, 256]
+image_path = "data/inference/onnx/input/head.jpg"
+input_size = [256, 256]
 
 print('processing the file--->{}'.format(image_path))
 image_filename = image_path.split('/')[-1]
 
 # xyxyp
-person_results = [[749, 633, 1572, 2343, 0.98], [1828, 1509, 2628, 2469, 0.98]]
+person_results = [[0, 0, 339, 508, 0.98]]
 person_results_xyxy = np.array(person_results)
 person_results_xywh = _xyxy2xywh(person_results_xyxy)
 
@@ -164,7 +164,7 @@ image_stacked = torch.Tensor(len(img_metas[0]['img']), img_metas[0]['img'].shape
 torch.cat(parts, out=image_stacked)
 
 start = time()
-iterations = 1000
+iterations = 1
 for i in range(iterations):
     with torch.no_grad():
         result = pose_model(

@@ -42,7 +42,7 @@ def preprocess_input(x, mean=None, std=None, input_space="RGB", input_range=None
 
 def main(input_path, output_path):
     batch_size = 1
-    input_size = [192, 256]
+    input_size = [256, 192]
     input_range = [0, 1]  # Parameter for preprocessing function
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
@@ -53,7 +53,7 @@ def main(input_path, output_path):
     image_transformed = cv2.resize(image_orig, input_size, interpolation=cv2.INTER_NEAREST)
     image_transformed = preprocess_input(image_transformed, mean=mean, std=std, input_range=input_range)
 
-    onnx_path = "mmpose_keypoint.onnx"
+    onnx_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
     engine_name = "mmpose_keypoint.plan"
     # convert_model_to_onnx(
     #     onnx_path=onnx_path, engine_name=engine_name, model=model_test, device=device, batch_size=batch_size)
@@ -83,7 +83,7 @@ def main(input_path, output_path):
     out_size = batch_size
 
     start = time()
-    iterations = 1000
+    iterations = 1
     for i in range(iterations):
         out = do_inference(engine, image_transformed, h_input, d_input,
                            h_output, d_output, stream, out_size)
@@ -105,8 +105,8 @@ def main(input_path, output_path):
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     for i, p in enumerate(points):
-        image_orig = cv2.circle(image_orig, (p[0], p[1]), 8, (0, 255, 0), thickness=-1)
-        image_orig = cv2.putText(image_orig, str(i), (p[0], p[1]), font, 3, (0, 255, 0), 1)
+        image_orig = cv2.circle(image_orig, (p[0], p[1]), 3, (0, 255, 0), thickness=-1)
+        # image_orig = cv2.putText(image_orig, str(i), (p[0], p[1]), font, 3, (0, 255, 0), 1)
 
     cv2.imwrite(output_path, image_orig)
 
@@ -199,6 +199,6 @@ def allocate_buffers(engine):
 
 
 if __name__ == '__main__':
-    input_path = "data/inference/tensorrt/input/img_2_box.png"
-    output_path = "data/inference/tensorrt/output/img_2_box.png"
+    input_path = "data/inference/onnx/input/man.png"
+    output_path = "data/inference/onnx/output/man.png"
     main(input_path, output_path)

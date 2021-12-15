@@ -1,14 +1,14 @@
 import cv2
 import os
-import warnings
 import numpy as np
 import math
+import warnings
 from torchvision.transforms import functional as F
 
-from mmpose.apis import (inference_top_down_pose_model,
-                         init_pose_model,
-                         vis_pose_result,
-                         process_mmdet_results)
+# from mmpose.apis import (inference_top_down_pose_model,
+#                          init_pose_model,
+#                          vis_pose_result,
+#                          process_mmdet_results)
 
 # from mmpose.mmpose.core.post_processing import (fliplr_joints,
 #
@@ -213,16 +213,7 @@ def _box2cs(input_size, box):
     return center, scale
 
 
-def TopDownAffine(results, use_udp=False):
-    image_size = results['ann_info']['image_size']
-
-    img = results['img']
-    joints_3d = results['joints_3d']
-    joints_3d_visible = results['joints_3d_visible']
-    c = results['center']
-    s = results['scale']
-    r = results['rotation']
-
+def TopDownAffine(img, image_size, joints_3d, joints_3d_visible, c, s, r, num_joints, use_udp=False):
     if use_udp:
         trans = get_warp_matrix(r, c * 2.0, image_size - 1.0, s * 200.0)
         img = cv2.warpAffine(
@@ -236,33 +227,11 @@ def TopDownAffine(results, use_udp=False):
             img,
             trans, (int(image_size[0]), int(image_size[1])),
             flags=cv2.INTER_LINEAR)
-        for i in range(results['ann_info']['num_joints']):
+        for i in range(num_joints):
             if joints_3d_visible[i, 0] > 0.0:
                 joints_3d[i, 0:2] = affine_transform(joints_3d[i, 0:2], trans)
 
-    results['img'] = img
-    results['joints_3d'] = joints_3d
-    results['joints_3d_visible'] = joints_3d_visible
-
-    return results
-
-
-def _xyxy2xywh(bbox_xyxy):
-    """Transform the bbox format from x1y1x2y2 to xywh.
-
-    Args:
-        bbox_xyxy (np.ndarray): Bounding boxes (with scores), shaped (n, 4) or
-            (n, 5). (left, top, right, bottom, [score])
-
-    Returns:
-        np.ndarray: Bounding boxes (with scores),
-          shaped (n, 4) or (n, 5). (left, top, width, height, [score])
-    """
-    bbox_xywh = bbox_xyxy.copy()
-    bbox_xywh[:, 2] = bbox_xywh[:, 2] - bbox_xywh[:, 0] + 1
-    bbox_xywh[:, 3] = bbox_xywh[:, 3] - bbox_xywh[:, 1] + 1
-
-    return bbox_xywh
+    return img, joints_3d, joints_3d_visible
 
 
 def preprocess_input(x, mean=None, std=None, input_space="RGB", input_range=None, **kwargs):
@@ -663,100 +632,47 @@ def transform_preds(coords, center, scale, output_size, use_udp=False):
 
 def main():
     # body
-    # flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16]]
-    # pose_config = 'configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py'
-    # pose_checkpoint = 'pretrained_weights/mmpose/body/deeppose_res50_coco_256x192-f6de6c0e_20210205.pth'
     # input_size = [192, 256]
-    # heatmap_size = None
     # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
+    # heatmap_size = None
 
     # wholebody
-    pose_config = 'configs_mmpose/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/res50_coco_wholebody_256x192.py'
-    pose_checkpoint = 'pretrained_weights/mmpose/wholebody/res50_coco_wholebody_256x192-9e37ed88_20201004.pth'
     input_size = [192, 256]
-    heatmap_size = [48, 64]
     num_joints = 133
-    flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 20], [18, 21], [19, 22],
-                  [23, 39], [24, 38], [25, 37], [26, 36], [27, 35], [28, 34], [29, 33], [30, 32], [40, 49], [41, 48],
-                  [42, 47], [43, 46], [44, 45], [54, 58], [55, 57], [59, 68], [60, 67], [61, 66], [62, 65], [63, 70],
-                  [64, 69], [71, 77], [72, 76], [73, 75], [78, 82], [79, 81], [83, 87], [84, 86], [88, 90], [91, 112],
-                  [92, 113], [93, 114], [94, 115], [95, 116], [96, 117], [97, 118], [98, 119], [99, 120], [100, 121],
-                  [101, 122], [102, 123], [103, 124], [104, 125], [105, 126], [106, 127], [107, 128], [108, 129],
-                  [109, 130], [110, 131], [111, 132]]
+    onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
+    heatmap_size = [48, 64]
+
+    pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
 
     image_path = "data/inference/onnx/input/man5.jpg"
 
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    image_orig = img.copy()
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     h, w = img.shape[:2]
 
-    # xyxyp
-    person_results = [[0, 0, w, h, 0.98]]
-    person_results_xyxy = np.array(person_results)
-    person_results_xywh = _xyxy2xywh(person_results_xyxy)
+    person_results_xywh = [0, 0, (w + 1), (h + 1)]
+    center, scale = _box2cs(input_size, person_results_xywh)
 
-    pose_model = init_pose_model(pose_config, pose_checkpoint)
+    joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
+    joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
 
-    img_metas = []
-    num_joints = 133
-    for bbox in person_results_xywh:
-        center, scale = _box2cs(input_size, bbox)
+    img, joints_3d, joints_3d_visible = TopDownAffine(img, np.array(input_size), joints_3d, joints_3d_visible, center,
+                                                      scale, 0, num_joints)
+    img = preprocess_input(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], input_range=[0, 1])
 
-        # prepare data
-        data = {
-            'img_or_path': image_path,
-            'image_file': "",
-            'center': center,
-            'scale': scale,
-            'bbox_score': bbox[4] if len(bbox) == 5 else 1,
-            'bbox_id': 0,  # need to be assigned if batch_size > 1
-            'dataset': 'coco',
-            'joints_3d': np.zeros((num_joints, 3), dtype=np.float32),
-            'joints_3d_visible': np.zeros((num_joints, 3), dtype=np.float32),
-            'rotation': 0,
-            'flip_pairs': flip_pairs,
-            'ann_info': {
-                'image_size': np.array(input_size),
-                'num_joints': num_joints,
-                'flip_pairs': flip_pairs
-            },
-            'img': img
-        }
+    input_blob = np.moveaxis(img, -1, 0)  # [height, width, channels]->[channels, height, width]
+    input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
+    pose_model.setInput(input_blob)  # Set input of model
 
-        img_metas.append(data)
+    with torch.no_grad():
+        out = pose_model.forward()
 
-    for m in img_metas:
-        m = TopDownAffine(m)
-        m['img'] = F.to_tensor(m['img'])
-        m['img'] = F.normalize(m['img'], mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-    parts = []
-    for m in img_metas:
-        parts.append(m['img'].to('cuda').unsqueeze(0))
-
-    image_stacked = torch.Tensor(len(img_metas[0]['img']), img_metas[0]['img'].shape[0], img_metas[0]['img'].shape[1],
-                                 img_metas[0]['img'].shape[2]).to('cuda')
-    torch.cat(parts, out=image_stacked)
-
-    start = time()
-    iterations = 1
-    for i in range(iterations):
-        with torch.no_grad():
-            result = pose_model(
-                img=image_stacked,
-                img_metas=img_metas,
-                return_loss=False,
-                return_heatmap=True if heatmap_size else False)
-
-    taken = time() - start
-    print("FPS PyTorch: {:.1f} samples".format(iterations / taken))
-
-    poses, heatmap = result['preds'], result['output_heatmap']
-
+    result_keypoints = []
     if heatmap_size:
-
         preds, maxvals = keypoints_from_heatmaps(
-            heatmap,
+            out,
             [center],
             [scale],
             unbiased=False,
@@ -770,48 +686,27 @@ def main():
         all_preds[:, :, 0:2] = preds[:, :, 0:2]
         all_preds[:, :, 2:3] = maxvals
 
-        pose_results = []
-        for pose, bbox_xyxy in zip(poses, person_results):
-            pose_result = {}
-            pose_result['keypoints'] = pose
-            pose_result['bbox'] = bbox_xyxy
-            pose_results.append(pose_result)
-
-        print(poses[0])
-
-        vis_result = vis_pose_result(pose_model,
-                                     image_path,
-                                     pose_results,
-                                     dataset=pose_model.cfg.data.test.type,
-                                     show=False,
-                                     radius=10,
-                                     thickness=5)
-
-        cv2.imshow("pic", vis_result)
-        cv2.waitKey()
-
-
+        for i, p in enumerate(all_preds[0]):
+            image_orig = cv2.circle(image_orig, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
+            result_keypoints.append(
+                image_path.split("/")[-1] + " " + str(i) + " " + str(p[0]) + " " + str(p[1]))
     else:
+        out = out * input_size
+        keypoints = transform_preds(out[0], center, scale, input_size)
 
-        pose_results = []
-        for pose, bbox_xyxy in zip(poses, person_results):
-            pose_result = {}
-            pose_result['keypoints'] = pose
-            pose_result['bbox'] = bbox_xyxy
-            pose_results.append(pose_result)
+        for i, k in enumerate(keypoints):
+            image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
 
-        print(poses[0])
+            result_keypoints.append(
+                image_path.split("/")[-1] + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-        vis_result = vis_pose_result(pose_model,
-                                     image_path,
-                                     pose_results,
-                                     dataset=pose_model.cfg.data.test.type,
-                                     show=False,
-                                     radius=10,
-                                     thickness=5)
+    cv2.imwrite("data/inference/onnx/output/" + str(image_path.split("/")[-1]), image_orig)
 
-        cv2.imshow("pic", vis_result)
-        cv2.waitKey()
+    with open("results.txt", 'w') as f:
+        for item in result_keypoints:
+            f.write("%s\n" % item)
+
+    print(result_keypoints)
 
 
 if __name__ == "__main__":

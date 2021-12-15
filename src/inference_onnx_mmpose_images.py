@@ -3,9 +3,13 @@ from typing import List
 import cv2
 import numpy as np
 from time import time
+from pathlib import Path
+from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
+
+from my_utils import recreate_folder, get_all_files_in_folder
 
 
 def preprocess_input(x, mean=None, std=None, input_space="RGB", input_range=None, **kwargs):
@@ -29,7 +33,8 @@ def preprocess_input(x, mean=None, std=None, input_space="RGB", input_range=None
 
 def inference(onnx_model_path: str,
               model_input_shape_wh: tuple,
-              crop_path: str,
+              input_dir: str,
+              output_dir: str,
               preprocess_data: dict,
               heatmap_size: List,
               type: str) -> None:
@@ -40,52 +45,67 @@ def inference(onnx_model_path: str,
         pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
         # pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
-    image_orig = cv2.imread(crop_path)
-    h, w = image_orig.shape[:2]
-    test_image = cv2.imread(crop_path)
-    test_image = cv2.resize(test_image, model_input_shape_wh, interpolation=cv2.INTER_NEAREST)
-    test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
-    test_image = preprocess_input(test_image, mean=preprocess_data['mean'], std=preprocess_data['std'],
-                                  input_range=preprocess_data['input_range'])
+    images = get_all_files_in_folder(Path(input_dir), ["*"])
 
-    input_blob = np.moveaxis(test_image, -1, 0)  # [height, width, channels]->[channels, height, width]
-    input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
+    result_keypoints = []
 
-    pose_model.setInput(input_blob)  # Set input of model
-    start = time()
-    iterations = 1
-    for i in range(iterations):
-        out = pose_model.forward()  # Get model prediction
+    for im in tqdm(images):
+        image_orig = cv2.imread(str(im))
+        h, w = image_orig.shape[:2]
+        test_image = cv2.imread(str(im))
+        test_image = cv2.resize(test_image, model_input_shape_wh, interpolation=cv2.INTER_NEAREST)
+        test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
+        test_image = preprocess_input(test_image, mean=preprocess_data['mean'], std=preprocess_data['std'],
+                                      input_range=preprocess_data['input_range'])
 
-    taken = time() - start
-    print("FPS ONNX: {:.1f} samples".format(iterations / taken))
+        input_blob = np.moveaxis(test_image, -1, 0)  # [height, width, channels]->[channels, height, width]
+        input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
 
-    # visualization
-    if heatmap_size:
-        points = _get_max_preds(out)
+        pose_model.setInput(input_blob)  # Set input of model
+        start = time()
+        iterations = 1
+        for i in range(iterations):
+            out = pose_model.forward()  # Get model prediction
 
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        for o in points[0]:
-            for i, key_points in enumerate(o):
-                x = int(key_points[0] * w / heatmap_size[0])
-                y = int(key_points[1] * h / heatmap_size[1])
-                # x = int(key_points[0] * model_input_shape_wh[0] / heatmap_size[0])  # w
-                # y = int(key_points[1] * model_input_shape_wh[1] / heatmap_size[1])  # h
+        taken = time() - start
+        # print("FPS ONNX: {:.1f} samples".format(iterations / taken))
 
-                # image_orig = cv2.putText(image_orig, str(i), (x, y), font, 1, (0, 255, 0), 1)
-                image_orig = cv2.circle(image_orig, (x, y), 3, (0, 255, 0), -1)
+        # visualization
+        keypoints = []
 
-    else:
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        for o in out:
-            for i, key_points in enumerate(o):
-                x = int(key_points[0] * w)
-                y = int(key_points[1] * h)
-                # image_orig = cv2.putText(image_orig, str(i), (x, y), font, 1, (0, 255, 0), 1)
-                image_orig = cv2.circle(image_orig, (x, y), 3, (0, 255, 0), -1)
+        if heatmap_size:
+            points = _get_max_preds(out)
 
-    cv2.imwrite("data/inference/onnx/output/" + str(crop_path.split("/")[-1]), image_orig)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for o in points[0]:
+                for i, key_points in enumerate(o):
+                    # x = int(key_points[0] * w / heatmap_size[0])
+                    # y = int(key_points[1] * h / heatmap_size[1])
+                    x = int(key_points[0] * model_input_shape_wh[0] / heatmap_size[0])  # w
+                    y = int(key_points[1] * model_input_shape_wh[1] / heatmap_size[1])  # h
+                    keypoints.append([x,y])
 
+                    # image_orig = cv2.putText(image_orig, str(i), (x, y), font, 1, (0, 255, 0), 1)
+                    image_orig = cv2.circle(image_orig, (x, y), 3, (0, 255, 0), -1)
+
+        else:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for o in out:
+                for i, key_points in enumerate(o):
+                    x = int(key_points[0] * w)
+                    y = int(key_points[1] * h)
+                    keypoints.append([x, y])
+                    # image_orig = cv2.putText(image_orig, str(i), (x, y), font, 1, (0, 255, 0), 1)
+                    image_orig = cv2.circle(image_orig, (x, y), 3, (0, 255, 0), -1)
+
+        cv2.imwrite(output_dir + "/" + str(im.name), image_orig)
+
+        for i, k in enumerate(keypoints):
+            result_keypoints.append(str(im.name) + " " + str(i) + " " + ' '.join(str(int(e)) for e in k))
+
+    with open("data/inference/onnx/" + "results.txt", 'w') as f:
+        for item in result_keypoints:
+            f.write("%s\n" % item)
 
 def _get_max_preds(heatmaps):
     """Get keypoint predictions from score maps.
@@ -124,10 +144,14 @@ if __name__ == "__main__":
     preprocess_data['std'] = [0.229, 0.224, 0.225]
     preprocess_data['input_range'] = [0, 1]
 
+    input_dir = "data/inference/onnx/input_images"
+    output_dir = "data/inference/onnx/output_images"
+    recreate_folder(output_dir)
+
     type = "body"
 
     if type == "body":
-        crop_path = "data/inference/onnx/input_images/image_1_00186.jpg"
+        crop_path = "data/inference/onnx/input/imm.png"
 
         model_input_shape_hw = (192, 256)
         onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
@@ -148,15 +172,15 @@ if __name__ == "__main__":
         heatmap_size = [64, 64]
 
     elif type == "wholebody":
-        crop_path = "data/inference/onnx/input/test3.jpg"
-
+        # crop_path = "data/inference/onnx/input/test3.jpg"
         model_input_shape_hw = (192, 256)
         onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
         heatmap_size = [48, 64]
 
     inference(onnx_model_path,
               model_input_shape_hw,
-              crop_path,
+              input_dir,
+              output_dir,
               preprocess_data,
               heatmap_size,
               type)

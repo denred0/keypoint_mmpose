@@ -3,6 +3,7 @@ import argparse
 
 import numpy as np
 import torch
+import torch._C as _C
 
 from mmpose.apis import init_pose_model
 
@@ -63,6 +64,8 @@ def pytorch2onnx(model,
     one_img = torch.randn(input_shape)
 
     register_extra_symbolics(opset_version)
+    # TrainingMode = _C._onnx.TrainingMode
+
     torch.onnx.export(
         model,
         one_img,

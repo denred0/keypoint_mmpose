@@ -1,6 +1,5 @@
 import cv2
 import os
-import warnings
 import numpy as np
 import math
 from torchvision.transforms import functional as F
@@ -16,6 +15,11 @@ from mmpose.apis import (inference_top_down_pose_model,
 
 import torch
 from time import time
+from pathlib import Path
+from tqdm import tqdm
+import warnings
+
+from my_utils import get_all_files_in_folder
 
 
 def warp_affine_joints(joints, mat):
@@ -662,13 +666,13 @@ def transform_preds(coords, center, scale, output_size, use_udp=False):
 
 
 def main():
+    flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16]]
     # body
-    # flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16]]
     # pose_config = 'configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py'
     # pose_checkpoint = 'pretrained_weights/mmpose/body/deeppose_res50_coco_256x192-f6de6c0e_20210205.pth'
     # input_size = [192, 256]
-    # heatmap_size = None
     # num_joints = 17
+    # heatmap_size= None
 
     # wholebody
     pose_config = 'configs_mmpose/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/res50_coco_wholebody_256x192.py'
@@ -676,142 +680,125 @@ def main():
     input_size = [192, 256]
     heatmap_size = [48, 64]
     num_joints = 133
-    flip_pairs = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 20], [18, 21], [19, 22],
-                  [23, 39], [24, 38], [25, 37], [26, 36], [27, 35], [28, 34], [29, 33], [30, 32], [40, 49], [41, 48],
-                  [42, 47], [43, 46], [44, 45], [54, 58], [55, 57], [59, 68], [60, 67], [61, 66], [62, 65], [63, 70],
-                  [64, 69], [71, 77], [72, 76], [73, 75], [78, 82], [79, 81], [83, 87], [84, 86], [88, 90], [91, 112],
-                  [92, 113], [93, 114], [94, 115], [95, 116], [96, 117], [97, 118], [98, 119], [99, 120], [100, 121],
-                  [101, 122], [102, 123], [103, 124], [104, 125], [105, 126], [106, 127], [107, 128], [108, 129],
-                  [109, 130], [110, 131], [111, 132]]
-
-    image_path = "data/inference/onnx/input/man5.jpg"
-
-    img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    h, w = img.shape[:2]
-
-    # xyxyp
-    person_results = [[0, 0, w, h, 0.98]]
-    person_results_xyxy = np.array(person_results)
-    person_results_xywh = _xyxy2xywh(person_results_xyxy)
 
     pose_model = init_pose_model(pose_config, pose_checkpoint)
 
-    img_metas = []
-    num_joints = 133
-    for bbox in person_results_xywh:
-        center, scale = _box2cs(input_size, bbox)
+    images = get_all_files_in_folder(Path("data/inference/base/input"), ["*"])
 
-        # prepare data
-        data = {
-            'img_or_path': image_path,
-            'image_file': "",
-            'center': center,
-            'scale': scale,
-            'bbox_score': bbox[4] if len(bbox) == 5 else 1,
-            'bbox_id': 0,  # need to be assigned if batch_size > 1
-            'dataset': 'coco',
-            'joints_3d': np.zeros((num_joints, 3), dtype=np.float32),
-            'joints_3d_visible': np.zeros((num_joints, 3), dtype=np.float32),
-            'rotation': 0,
-            'flip_pairs': flip_pairs,
-            'ann_info': {
-                'image_size': np.array(input_size),
-                'num_joints': num_joints,
-                'flip_pairs': flip_pairs
-            },
-            'img': img
-        }
+    result_keypoints = []
+    for im in tqdm(images):
 
-        img_metas.append(data)
+        img = cv2.imread(str(im), cv2.IMREAD_COLOR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = img.shape[:2]
 
-    for m in img_metas:
-        m = TopDownAffine(m)
-        m['img'] = F.to_tensor(m['img'])
-        m['img'] = F.normalize(m['img'], mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # xyxyp
+        person_results = [[0, 0, w, h, 0.98]]
+        person_results_xyxy = np.array(person_results)
+        person_results_xywh = _xyxy2xywh(person_results_xyxy)
 
-    parts = []
-    for m in img_metas:
-        parts.append(m['img'].to('cuda').unsqueeze(0))
+        img_metas = []
 
-    image_stacked = torch.Tensor(len(img_metas[0]['img']), img_metas[0]['img'].shape[0], img_metas[0]['img'].shape[1],
-                                 img_metas[0]['img'].shape[2]).to('cuda')
-    torch.cat(parts, out=image_stacked)
+        for bbox in person_results_xywh:
+            center, scale = _box2cs(input_size, bbox)
 
-    start = time()
-    iterations = 1
-    for i in range(iterations):
-        with torch.no_grad():
-            result = pose_model(
-                img=image_stacked,
-                img_metas=img_metas,
-                return_loss=False,
-                return_heatmap=True if heatmap_size else False)
+            # prepare data
+            data = {
+                'img_or_path': str(im),
+                'image_file': "",
+                'center': center,
+                'scale': scale,
+                'bbox_score': bbox[4] if len(bbox) == 5 else 1,
+                'bbox_id': 0,  # need to be assigned if batch_size > 1
+                'dataset': 'coco',
+                'joints_3d': np.zeros((num_joints, 3), dtype=np.float32),
+                'joints_3d_visible': np.zeros((num_joints, 3), dtype=np.float32),
+                'rotation': 0,
+                'flip_pairs': flip_pairs,
+                'ann_info': {
+                    'image_size': np.array(input_size),
+                    'num_joints': num_joints,
+                    'flip_pairs': flip_pairs
+                },
+                'img': img
+            }
 
-    taken = time() - start
-    print("FPS PyTorch: {:.1f} samples".format(iterations / taken))
+            img_metas.append(data)
 
-    poses, heatmap = result['preds'], result['output_heatmap']
+        for m in img_metas:
+            m = TopDownAffine(m)
+            m['img'] = F.to_tensor(m['img'])
+            m['img'] = F.normalize(m['img'], mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
-    if heatmap_size:
+        parts = []
+        for m in img_metas:
+            parts.append(m['img'].to('cuda').unsqueeze(0))
 
-        preds, maxvals = keypoints_from_heatmaps(
-            heatmap,
-            [center],
-            [scale],
-            unbiased=False,
-            post_process='default',
-            kernel=11,
-            valid_radius_factor=0.0546875,
-            use_udp=False,
-            target_type='GaussianHeatmap')
+        image_stacked = torch.Tensor(len(img_metas[0]['img']), img_metas[0]['img'].shape[0],
+                                     img_metas[0]['img'].shape[1],
+                                     img_metas[0]['img'].shape[2]).to('cuda')
+        torch.cat(parts, out=image_stacked)
 
-        all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
-        all_preds[:, :, 0:2] = preds[:, :, 0:2]
-        all_preds[:, :, 2:3] = maxvals
+        start = time()
+        iterations = 1
+        for i in range(iterations):
+            with torch.no_grad():
+                result = pose_model(
+                    img=image_stacked,
+                    img_metas=img_metas,
+                    return_loss=False,
+                    return_heatmap=True if heatmap_size else False)
 
-        pose_results = []
-        for pose, bbox_xyxy in zip(poses, person_results):
-            pose_result = {}
-            pose_result['keypoints'] = pose
-            pose_result['bbox'] = bbox_xyxy
-            pose_results.append(pose_result)
+        taken = time() - start
+        # print("FPS PyTorch: {:.1f} samples".format(iterations / taken))
 
-        print(poses[0])
+        poses, heatmap = result['preds'], result['output_heatmap']
 
-        vis_result = vis_pose_result(pose_model,
-                                     image_path,
-                                     pose_results,
-                                     dataset=pose_model.cfg.data.test.type,
-                                     show=False,
-                                     radius=10,
-                                     thickness=5)
+        if heatmap_size:
 
-        cv2.imshow("pic", vis_result)
-        cv2.waitKey()
+            preds, maxvals = keypoints_from_heatmaps(
+                heatmap,
+                [center],
+                [scale],
+                unbiased=False,
+                post_process='default',
+                kernel=11,
+                valid_radius_factor=0.0546875,
+                use_udp=False,
+                target_type='GaussianHeatmap')
 
+            all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
+            all_preds[:, :, 0:2] = preds[:, :, 0:2]
+            all_preds[:, :, 2:3] = maxvals
 
-    else:
+            for i, k in enumerate(all_preds[0]):
+                # image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
 
-        pose_results = []
-        for pose, bbox_xyxy in zip(poses, person_results):
-            pose_result = {}
-            pose_result['keypoints'] = pose
-            pose_result['bbox'] = bbox_xyxy
-            pose_results.append(pose_result)
+                result_keypoints.append(
+                    im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-        print(poses[0])
+        else:
+            for i, k in enumerate(poses[0]):
+                # image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
 
-        vis_result = vis_pose_result(pose_model,
-                                     image_path,
-                                     pose_results,
-                                     dataset=pose_model.cfg.data.test.type,
-                                     show=False,
-                                     radius=10,
-                                     thickness=5)
+                result_keypoints.append(
+                    im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-        cv2.imshow("pic", vis_result)
-        cv2.waitKey()
+    with open('data/inference/base/results.txt', 'w') as f:
+        for item in result_keypoints:
+            f.write("%s\n" % item)
+
+    # vis_result = vis_pose_result(pose_model,
+    #                              image_path,
+    #                              pose_results,
+    #                              dataset=pose_model.cfg.data.test.type,
+    #                              show=False,
+    #                              radius=10,
+    #                              thickness=5)
+
+    # cv2.imwrite(os.path.join(keypoint_inference, image_filename), vis_result)
+    # print('writing the image file to destination directory--->{}'.format(
+    #     os.path.join(keypoint_inference, image_filename)))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 import numpy as np
 from tqdm import tqdm
 
-pytorch_file = "data/inference/base/results.txt"
-onnx_file = "results.txt"
+pytorch_file = "wholebody_res50_result.txt"
+onnx_file = "results_onnx.txt"
 
 with open(pytorch_file) as file:
     pytorch_lines = file.readlines()

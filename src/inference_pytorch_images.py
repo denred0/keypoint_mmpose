@@ -784,7 +784,7 @@ def main():
                 result_keypoints.append(
                     im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-    with open('data/inference/base/results.txt', 'w') as f:
+    with open('results_pytorch_images.txt', 'w') as f:
         for item in result_keypoints:
             f.write("%s\n" % item)
 

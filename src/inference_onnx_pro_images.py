@@ -10,6 +10,7 @@ from time import time
 from pathlib import Path
 
 from my_utils import recreate_folder, get_all_files_in_folder
+import constants
 
 
 def warp_affine_joints(joints, mat):
@@ -286,12 +287,16 @@ def transform_preds(coords, center, scale, output_size, use_udp=False):
         scale_x = scale[0] / output_size[0]
         scale_y = scale[1] / output_size[1]
 
+    # target_coords = np.ones_like(coords)
+    # target_coords[:, 0] = coords[:, 0] * scale_x + center[0] - scale[0] * 0.5
+    # target_coords[:, 0] = [round(x) for x in target_coords[:, 0]]
+    #
+    # target_coords[:, 1] = coords[:, 1] * scale_y + center[1] - scale[1] * 0.5
+    # target_coords[:, 1] = [round(x) for x in target_coords[:, 1]]
+
     target_coords = np.ones_like(coords)
     target_coords[:, 0] = coords[:, 0] * scale_x + center[0] - scale[0] * 0.5
-    target_coords[:, 0] = [round(x) for x in target_coords[:, 0]]
-
     target_coords[:, 1] = coords[:, 1] * scale_y + center[1] - scale[1] * 0.5
-    target_coords[:, 1] = [round(x) for x in target_coords[:, 1]]
 
     return target_coords
 
@@ -642,54 +647,386 @@ def _get_max_preds(heatmaps):
     return preds, maxvals
 
 
-def transform_preds(coords, center, scale, output_size, use_udp=False):
-    """Get final keypoint predictions from heatmaps and apply scaling and
-    translation to map them back to the image.
+def keypoints_from_regression(regression_preds, center, scale, img_size):
+    """Get final keypoint predictions from regression vectors and transform
+    them back to the image.
 
     Note:
+        batch_size: N
         num_keypoints: K
 
     Args:
-        coords (np.ndarray[K, ndims]):
+        regression_preds (np.ndarray[N, K, 2]): model prediction.
+        center (np.ndarray[N, 2]): Center of the bounding box (x, y).
+        scale (np.ndarray[N, 2]): Scale of the bounding box
+            wrt height/width.
+        img_size (list(img_width, img_height)): model input image size.
 
-            * If ndims=2, corrds are predicted keypoint location.
-            * If ndims=4, corrds are composed of (x, y, scores, tags)
-            * If ndims=5, corrds are composed of (x, y, scores, tags,
-              flipped_tags)
-
-        center (np.ndarray[2, ]): Center of the bounding box (x, y).
-        scale (np.ndarray[2, ]): Scale of the bounding box
-            wrt [width, height].
-        output_size (np.ndarray[2, ] | list(2,)): Size of the
-            destination heatmaps.
-        use_udp (bool): Use unbiased data processing
 
     Returns:
-        np.ndarray: Predicted coordinates in the images.
+        preds (np.ndarray[N, K, 2]): Predicted keypoint location in images.
+        maxvals (np.ndarray[N, K, 1]): Scores (confidence) of the keypoints.
     """
-    assert coords.shape[1] in (2, 4, 5)
-    assert len(center) == 2
-    assert len(scale) == 2
-    assert len(output_size) == 2
+    N, K, _ = regression_preds.shape
+    preds, maxvals = regression_preds, np.ones((N, K, 1), dtype=np.float32)
 
-    # Recover the scale which is normalized by a factor of 200.
-    scale = scale * 200.0
+    preds = preds * img_size
 
-    if use_udp:
-        scale_x = scale[0] / (output_size[0] - 1.0)
-        scale_y = scale[1] / (output_size[1] - 1.0)
-    else:
-        scale_x = scale[0] / output_size[0]
-        scale_y = scale[1] / output_size[1]
+    # Transform back to the image
+    for i in range(N):
+        preds[i] = transform_preds(preds[i], center[i], scale[i], img_size)
 
-    target_coords = np.ones_like(coords)
-    target_coords[:, 0] = coords[:, 0] * scale_x + center[0] - scale[0] * 0.5
-    target_coords[:, 0] = [round(x) for x in target_coords[:, 0]]
+    return preds, maxvals
 
-    target_coords[:, 1] = coords[:, 1] * scale_y + center[1] - scale[1] * 0.5
-    target_coords[:, 1] = [round(x) for x in target_coords[:, 1]]
 
-    return target_coords
+def draw_skeleton(img, result, skeleton_type):
+    skeleton = constants.skeleton[skeleton_type]
+    pose_kpt_color = np.array(constants.pose_kpt_color[skeleton_type])
+    pose_link_color = np.array(constants.pose_link_color[skeleton_type])
+
+    img_vis = show_result(
+        img,
+        result,
+        skeleton,
+        radius=4,
+        thickness=1,
+        pose_kpt_color=pose_kpt_color,
+        pose_link_color=pose_link_color,
+        kpt_score_thr=0.3,
+        bbox_color=[(0, 255, 0)],
+        show=False,
+        out_file=None)
+
+    return img_vis
+
+
+def show_result(img,
+                result,
+                skeleton=None,
+                kpt_score_thr=0.3,
+                bbox_color=[(0, 255, 0)],
+                pose_kpt_color=None,
+                pose_link_color=None,
+                text_color='white',
+                radius=4,
+                thickness=1,
+                font_scale=0.5,
+                bbox_thickness=1,
+                win_name='',
+                show=False,
+                show_keypoint_weight=False,
+                wait_time=0,
+                out_file=None):
+    """Draw `result` over `img`.
+
+    Args:
+        img (str or Tensor): The image to be displayed.
+        result (list[dict]): The results to draw over `img`
+            (bbox_result, pose_result).
+        skeleton (list[list]): The connection of keypoints.
+            skeleton is 0-based indexing.
+        kpt_score_thr (float, optional): Minimum score of keypoints
+            to be shown. Default: 0.3.
+        bbox_color (str or tuple or :obj:`Color`): Color of bbox lines.
+        pose_kpt_color (np.array[Nx3]`): Color of N keypoints.
+            If None, do not draw keypoints.
+        pose_link_color (np.array[Mx3]): Color of M links.
+            If None, do not draw links.
+        text_color (str or tuple or :obj:`Color`): Color of texts.
+        radius (int): Radius of circles.
+        thickness (int): Thickness of lines.
+        font_scale (float): Font scales of texts.
+        win_name (str): The window name.
+        show (bool): Whether to show the image. Default: False.
+        show_keypoint_weight (bool): Whether to change the transparency
+            using the predicted confidence scores of keypoints.
+        wait_time (int): Value of waitKey param.
+            Default: 0.
+        out_file (str or None): The filename to write the image.
+            Default: None.
+
+    Returns:
+        Tensor: Visualized img, only if not `show` or `out_file`.
+    """
+    # img = cv2.imread(img)
+    # img = img.copy()
+
+    bbox_result = []
+    bbox_labels = []
+    pose_result = []
+    for res in result:
+        if 'bbox' in res:
+            bbox_result.append(res['bbox'])
+            bbox_labels.append(res.get('label', None))
+        pose_result.append(res['keypoints'])
+
+    if bbox_result:
+        bboxes = np.vstack(bbox_result)
+        # draw bounding boxes
+        imshow_bboxes(
+            img,
+            bboxes,
+            labels=bbox_labels,
+            colors=bbox_color,
+            text_color=text_color,
+            thickness=bbox_thickness,
+            font_scale=font_scale,
+            show=False)
+
+    if pose_result:
+        imshow_keypoints(img, pose_result, skeleton, kpt_score_thr,
+                         pose_kpt_color, pose_link_color, radius,
+                         thickness)
+
+    if show:
+        cv2.imshow(win_name, img)
+
+    if out_file is not None:
+        cv2.imwrite(out_file, img)
+
+    return img
+
+
+def imshow_bboxes(img,
+                  bboxes,
+                  labels=None,
+                  colors=[(0, 255, 0)],
+                  text_color='white',
+                  thickness=1,
+                  font_scale=0.5,
+                  show=True,
+                  win_name='',
+                  wait_time=0,
+                  out_file=None):
+    """Draw bboxes with labels (optional) on an image. This is a wrapper of
+    mmcv.imshow_bboxes.
+
+    Args:
+        img (str or ndarray): The image to be displayed.
+        bboxes (ndarray): ndarray of shape (k, 4), each row is a bbox in
+            format [x1, y1, x2, y2].
+        labels (str or list[str], optional): labels of each bbox.
+        colors (list[str or tuple or :obj:`Color`]): A list of colors.
+        text_color (str or tuple or :obj:`Color`): Color of texts.
+        thickness (int): Thickness of lines.
+        font_scale (float): Font scales of texts.
+        show (bool): Whether to show the image.
+        win_name (str): The window name.
+        wait_time (int): Value of waitKey param.
+        out_file (str, optional): The filename to write the image.
+
+    Returns:
+        ndarray: The image with bboxes drawn on it.
+    """
+
+    # adapt to mmcv.imshow_bboxes input format
+    bboxes = np.split(
+        bboxes, bboxes.shape[0], axis=0) if bboxes.shape[0] > 0 else []
+    if not isinstance(colors, list):
+        colors = [colors for _ in range(len(bboxes))]
+    # colors = [mmcv.color_val(c) for c in colors]
+    assert len(bboxes) == len(colors)
+
+    img = draw_bboxes(
+        img,
+        bboxes,
+        colors,
+        top_k=-1,
+        thickness=thickness,
+        show=False,
+        out_file=None)
+
+    if labels is not None:
+        if not isinstance(labels, list):
+            labels = [labels for _ in range(len(bboxes))]
+        assert len(labels) == len(bboxes)
+
+        for bbox, label, color in zip(bboxes, labels, colors):
+            if label is None:
+                continue
+            bbox_int = bbox[0, :4].astype(np.int32)
+            # roughly estimate the proper font size
+            text_size, text_baseline = cv2.getTextSize(label,
+                                                       cv2.FONT_HERSHEY_DUPLEX,
+                                                       font_scale, thickness)
+            text_x1 = bbox_int[0]
+            text_y1 = max(0, bbox_int[1] - text_size[1] - text_baseline)
+            text_x2 = bbox_int[0] + text_size[0]
+            text_y2 = text_y1 + text_size[1] + text_baseline
+            cv2.rectangle(img, (text_x1, text_y1), (text_x2, text_y2), color,
+                          cv2.FILLED)
+            # cv2.putText(img, label, (text_x1, text_y2 - text_baseline),
+            #             cv2.FONT_HERSHEY_DUPLEX, font_scale,
+            #             mmcv.color_val(text_color), thickness)
+
+            cv2.putText(img, label, (text_x1, text_y2 - text_baseline),
+                        cv2.FONT_HERSHEY_DUPLEX, font_scale,
+                        (255, 0, 0), thickness)
+
+    if show:
+        cv2.imshow(win_name, img)
+    if out_file is not None:
+        cv2.imwrite(out_file, img)
+    return img
+
+
+def draw_bboxes(img,
+                bboxes,
+                colors='green',
+                top_k=-1,
+                thickness=1,
+                show=True,
+                win_name='',
+                wait_time=0,
+                out_file=None):
+    """Draw bboxes on an image.
+
+    Args:
+        img (str or ndarray): The image to be displayed.
+        bboxes (list or ndarray): A list of ndarray of shape (k, 4).
+        colors (list[str or tuple or Color]): A list of colors.
+        top_k (int): Plot the first k bboxes only if set positive.
+        thickness (int): Thickness of lines.
+        show (bool): Whether to show the image.
+        win_name (str): The window name.
+        wait_time (int): Value of waitKey param.
+        out_file (str, optional): The filename to write the image.
+
+    Returns:
+        ndarray: The image with bboxes drawn on it.
+    """
+    # img = cv2.imread(img)
+    img = np.ascontiguousarray(img)
+
+    if isinstance(bboxes, np.ndarray):
+        bboxes = [bboxes]
+    if not isinstance(colors, list):
+        colors = [colors for _ in range(len(bboxes))]
+    # colors = [color_val(c) for c in colors]
+    # colors = [(0, 255, 0)]
+    assert len(bboxes) == len(colors)
+
+    for i, _bboxes in enumerate(bboxes):
+        _bboxes = _bboxes.astype(np.int32)
+        if top_k <= 0:
+            _top_k = _bboxes.shape[0]
+        else:
+            _top_k = min(top_k, _bboxes.shape[0])
+        for j in range(_top_k):
+            left_top = (_bboxes[j, 0], _bboxes[j, 1])
+            right_bottom = (_bboxes[j, 2], _bboxes[j, 3])
+            cv2.rectangle(
+                img, left_top, right_bottom, colors[i], thickness=thickness)
+
+    if show:
+        cv2.imshow(win_name, img)
+    if out_file is not None:
+        cv2.imwrite(out_file, img)
+    return img
+
+
+def imshow_keypoints(img,
+                     pose_result,
+                     skeleton=None,
+                     kpt_score_thr=0.3,
+                     pose_kpt_color=None,
+                     pose_link_color=None,
+                     radius=4,
+                     thickness=1,
+                     show_keypoint_weight=False):
+    """Draw keypoints and links on an image.
+
+    Args:
+            img (str or Tensor): The image to draw poses on. If an image array
+                is given, id will be modified in-place.
+            pose_result (list[kpts]): The poses to draw. Each element kpts is
+                a set of K keypoints as an Kx3 numpy.ndarray, where each
+                keypoint is represented as x, y, score.
+            kpt_score_thr (float, optional): Minimum score of keypoints
+                to be shown. Default: 0.3.
+            pose_kpt_color (np.array[Nx3]`): Color of N keypoints. If None,
+                the keypoint will not be drawn.
+            pose_link_color (np.array[Mx3]): Color of M links. If None, the
+                links will not be drawn.
+            thickness (int): Thickness of lines.
+    """
+
+    # img = cv2.imread(img)
+    img_h, img_w, _ = img.shape
+
+    for kpts in pose_result:
+
+        kpts = np.array(kpts, copy=False)
+
+        # draw each point on image
+        if pose_kpt_color is not None:
+            assert len(pose_kpt_color) == len(kpts)
+            for kid, kpt in enumerate(kpts):
+                x_coord, y_coord, kpt_score = int(kpt[0]), int(kpt[1]), kpt[2]
+                if kpt_score > kpt_score_thr:
+                    if show_keypoint_weight:
+                        img_copy = img.copy()
+                        r, g, b = pose_kpt_color[kid]
+                        cv2.circle(img_copy, (int(x_coord), int(y_coord)),
+                                   radius, (int(r), int(g), int(b)), -1)
+                        transparency = max(0, min(1, kpt_score))
+                        cv2.addWeighted(
+                            img_copy,
+                            transparency,
+                            img,
+                            1 - transparency,
+                            0,
+                            dst=img)
+                    else:
+                        r, g, b = pose_kpt_color[kid]
+                        cv2.circle(img, (int(x_coord), int(y_coord)), radius,
+                                   (int(r), int(g), int(b)), -1)
+
+        # draw links
+        if skeleton is not None and pose_link_color is not None:
+            assert len(pose_link_color) == len(skeleton)
+            for sk_id, sk in enumerate(skeleton):
+                pos1 = (int(kpts[sk[0], 0]), int(kpts[sk[0], 1]))
+                pos2 = (int(kpts[sk[1], 0]), int(kpts[sk[1], 1]))
+                if (pos1[0] > 0 and pos1[0] < img_w and pos1[1] > 0
+                        and pos1[1] < img_h and pos2[0] > 0 and pos2[0] < img_w
+                        and pos2[1] > 0 and pos2[1] < img_h
+                        and kpts[sk[0], 2] > kpt_score_thr
+                        and kpts[sk[1], 2] > kpt_score_thr):
+                    r, g, b = pose_link_color[sk_id]
+                    if show_keypoint_weight:
+                        img_copy = img.copy()
+                        X = (pos1[0], pos2[0])
+                        Y = (pos1[1], pos2[1])
+                        mX = np.mean(X)
+                        mY = np.mean(Y)
+                        length = ((Y[0] - Y[1]) ** 2 + (X[0] - X[1]) ** 2) ** 0.5
+                        angle = math.degrees(
+                            math.atan2(Y[0] - Y[1], X[0] - X[1]))
+                        stickwidth = 2
+                        polygon = cv2.ellipse2Poly(
+                            (int(mX), int(mY)),
+                            (int(length / 2), int(stickwidth)), int(angle), 0,
+                            360, 1)
+                        cv2.fillConvexPoly(img_copy, polygon,
+                                           (int(r), int(g), int(b)))
+                        transparency = max(
+                            0, min(1, 0.5 * (kpts[sk[0], 2] + kpts[sk[1], 2])))
+                        cv2.addWeighted(
+                            img_copy,
+                            transparency,
+                            img,
+                            1 - transparency,
+                            0,
+                            dst=img)
+                    else:
+                        cv2.line(
+                            img,
+                            pos1,
+                            pos2, (int(r), int(g), int(b)),
+                            thickness=thickness)
+
+    return img
 
 
 def main():
@@ -705,6 +1042,66 @@ def main():
     onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
     heatmap_size = [48, 64]
 
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_384x288.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res101_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res101_coco_wholebody_384x288.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res152_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res152_coco_wholebody_384x288.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w32_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w32_coco_wholebody_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w32_coco_wholebody_384x288.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    # heatmap_size = [72, 96]
+
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_vipnas_res50_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+
     pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
 
     output_folder = "data/inference/onnx/output_pro"
@@ -713,6 +1110,8 @@ def main():
     images = get_all_files_in_folder(Path("data/inference/onnx/input_pro"), ["*"])
 
     result_keypoints = []
+    duration = 0
+
     for im in tqdm(images):
 
         # image_path = "data/inference/base/input/image_1_00186.jpg"
@@ -734,10 +1133,17 @@ def main():
 
         input_blob = np.moveaxis(img, -1, 0)  # [height, width, channels]->[channels, height, width]
         input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
-        pose_model.setInput(input_blob)  # Set input of model
 
+        pose_model.setInput(input_blob)  # Set input of model np.mean(input_blob) = -0.7408532418992522
+
+        start = time()
         with torch.no_grad():
-            out = pose_model.forward()
+            out = pose_model.forward()  # np.mean(out) = 0.43181926
+        duration += time() - start
+
+        # with open(im.stem + ".txt", "w") as file:
+        #     for kk in range(len(out.flatten())):
+        #         file.write(str(out.flatten()[kk]) + "\n")
 
         if heatmap_size:
             preds, maxvals = keypoints_from_heatmaps(
@@ -756,24 +1162,42 @@ def main():
             all_preds[:, :, 2:3] = maxvals
 
             for i, p in enumerate(all_preds[0]):
-                image_orig = cv2.circle(image_orig, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
+                image_orig = cv2.circle(image_orig, (int(p[0]), int(p[1])), 3, (0, 255, 0), 1)
                 result_keypoints.append(
-                    im.name + " " + str(i) + " " + str(int(p[0])) + " " + str(int(p[1])))
-        else:
-            out = out * input_size
-            keypoints = transform_preds(out[0], center, scale, input_size)
+                    im.name + " " + str(i) + " " + str(round(p[0])) + " " + str(round(p[1])))
 
-            for i, k in enumerate(keypoints):
+            result = [{"bbox": np.array(person_results_xywh), "keypoints": all_preds[0]}]
+            img_vis = draw_skeleton(image_orig, result, 'wholebody')
+            cv2.imwrite(output_folder + "/" + im.name, img_vis)
+        else:
+            preds, maxvals = keypoints_from_regression(out, [center], [scale], input_size)
+
+            all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
+            all_preds[:, :, 0:2] = preds[:, :, 0:2]
+            all_preds[:, :, 2:3] = maxvals
+
+            # out = out * input_size
+            # keypoints = transform_preds(out[0], center, scale, input_size)
+
+            for i, k in enumerate(all_preds[0]):
                 image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
 
                 result_keypoints.append(
                     im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-        cv2.imwrite(output_folder + "/" + im.name, image_orig)
+            result = [{"bbox": np.array(person_results_xywh), "keypoints": all_preds[0]}]
+            img_vis = draw_skeleton(image_orig, result, 'body')
+            cv2.imwrite(output_folder + "/" + im.name, img_vis)
 
-    with open("results.txt", 'w') as f:
+        # cv2.imwrite(output_folder + "/" + im.name, image_orig)
+
+    with open("results_onnx.txt", 'w') as f:
         for item in result_keypoints:
             f.write("%s\n" % item)
+
+    print(duration)
+    print(len(images))
+    print(f"FPS: {round(len(images) / duration, 2)}")
 
     # print(keypoints)
 

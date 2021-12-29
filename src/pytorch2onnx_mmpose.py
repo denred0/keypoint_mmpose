@@ -132,15 +132,16 @@ def pytorch2onnx(model,
 
 if __name__ == '__main__':
 
-    config = "configs_mmpose/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/res50_coco_wholebody_256x192.py"
-    checkpoint = "pretrained_weights/mmpose/wholebody/res50_coco_wholebody_256x192-9e37ed88_20201004.pth"
+    config = "configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py"
+    checkpoint = "pretrained_weights/mmpose/body/deeppose_res50_coco_256x192-f6de6c0e_20210205.pth"
 
     # shape = torch.randn(1, 3, 640, 480, requires_grad=True)
 
     # data_cfg = dict(image_size=[192, 256]) - это высота и ширина
     # shape то же должен быть в формате (batch, channels, height, weight)
-    shape = (1, 3, 192, 256)  # (1, 3, 256, 192)
-    name = "wholebody_res50_coco_wholebody_256x192.onnx"
+    # res50_coco_wholebody_256x192.py
+    shape = (30, 3, 192, 256)  # (1, 3, 256, 192)
+    name = "body_batch30_res50_coco_256x192.onnx"
 
     model = init_pose_model(config, checkpoint, device='cpu')
     model = _convert_batchnorm(model)

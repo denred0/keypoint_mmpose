@@ -680,7 +680,7 @@ def draw_skeleton(img, result, skeleton_type):
         pose_kpt_color=pose_kpt_color,
         pose_link_color=pose_link_color,
         kpt_score_thr=0.3,
-        bbox_color=[(0, 255, 0)],
+        bbox_color=[(0, 255, 0)] * len(result),
         show=False,
         out_file=None)
 
@@ -744,7 +744,7 @@ def show_result(img,
     for res in result:
         if 'bbox' in res:
             bbox_result.append(res['bbox'])
-            bbox_labels.append(res.get('label', None))
+            # bbox_labels.append(res.get('label', None))
         pose_result.append(res['keypoints'])
 
     if bbox_result:
@@ -823,7 +823,7 @@ def imshow_bboxes(img,
         show=False,
         out_file=None)
 
-    if labels is not None:
+    if labels is not None and len(labels) != 0:
         if not isinstance(labels, list):
             labels = [labels for _ in range(len(bboxes))]
         assert len(labels) == len(bboxes)
@@ -1020,7 +1020,8 @@ def main():
     # body
     input_size = [192, 256]
     num_joints = 17
-    onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
+    # onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
+    onnx_model_path = "data/onnx_export/body_batch2_res50_coco_256x192.onnx"
     heatmap_size = None
 
     # wholebody
@@ -1036,27 +1037,60 @@ def main():
         pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
         # pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
-    image_path = "data/inference/onnx/input/person.jpg"
+    # image_path = "data/inference/onnx/input/person.jpg"
+    image_path = "data/inference/base/input/persons.jpg"
 
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     image_orig = img.copy()
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     h, w = img.shape[:2]
 
-    person_results_xywh = [0, 0, (w + 1), (h + 1)]
+    # person_results_xywh = [[0, 0, (w + 1), (h + 1)]]
+    #
+    # [1112, 319, 1400, 875, 0.99]
+    # [612, 66, 1100, 873, 0.99]
 
-    center, scale = _box2cs(input_size, person_results_xywh)
+    # [447, 218, 1099, 896, 0.99]
 
-    joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
-    joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
+    batch_size = 2
+    # person_results_xywh = [[1112, 319, 288, 556, 0.99], [612, 66, 488, 807, 0.99]]
+    # person_results_xywh = [[447, 218, 652, 678, 0.99]]
+    # person_results_x1y1x2y2 = [[447, 218, 1099, 896, 0.99]]
 
-    img, joints_3d, joints_3d_visible = TopDownAffine(img, np.array(input_size), joints_3d, joints_3d_visible, center,
-                                                      scale, 0, num_joints)
-    img = preprocess_input(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], input_range=[0, 1])
+    person_results_x1y1x2y2 = [[1112, 319, 1400, 875, 0.99], [612, 66, 1100, 873, 0.99]]
+    # person_results_x1y1x2y2 = [[612, 66, 1100, 873, 0.99]]
+    blobs = [np.zeros((1, 3, 256, 192))] * batch_size
+    centers = [np.zeros(2)] * batch_size
+    scales = [np.zeros(2)] * batch_size
+    # blobs = []
+    for i, box in enumerate(person_results_x1y1x2y2):
+        image_work = img.copy()
+        box_c = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
+        center, scale = _box2cs(input_size, box_c)
+        centers[i] = center
+        scales[i] = scale
 
-    input_blob = np.moveaxis(img, -1, 0)  # [height, width, channels]->[channels, height, width]
-    input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
-    pose_model.setInput(input_blob)  # Set input of model
+        joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
+        joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
+
+        image_work, joints_3d, joints_3d_visible = TopDownAffine(image_work, np.array(input_size), joints_3d,
+                                                          joints_3d_visible, center,
+                                                          scale, 0, num_joints)
+        image_work = preprocess_input(image_work, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
+                               input_range=[0, 1])
+
+        input_blob = np.moveaxis(image_work, -1, 0)  # [height, width, channels]->[channels, height, width]
+
+        input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
+
+        # blobs.append(input_blob)
+        blobs[i] = input_blob  # += blobs + input_blob
+
+    # input_blob2 =
+
+    blob_batch = np.concatenate(tuple(blobs))
+
+    pose_model.setInput(blob_batch)  # Set input of model
 
     with torch.no_grad():
         out = pose_model.forward()
@@ -1065,8 +1099,8 @@ def main():
     if heatmap_size:
         preds, maxvals = keypoints_from_heatmaps(
             out,
-            [center],
-            [scale],
+            centers,
+            scales,
             unbiased=False,
             post_process='default',
             kernel=11,
@@ -1074,13 +1108,13 @@ def main():
             use_udp=False,
             target_type='GaussianHeatmap')
 
-        all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
+        all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
         all_preds[:, :, 0:2] = preds[:, :, 0:2]
         all_preds[:, :, 2:3] = maxvals
 
         # visualization
         # img = image_path
-        result = [{"bbox": np.array(person_results_xywh), "keypoints": all_preds[0]}]
+        result = [{"bbox": np.array(person_results_x1y1x2y2), "keypoints": all_preds[0]}]
         img_vis = draw_skeleton(image_orig, result, 'wholebody')
         cv2.imwrite("paint.png", img_vis)
 
@@ -1091,9 +1125,9 @@ def main():
 
     else:
 
-        preds, maxvals = keypoints_from_regression(out, [center], [scale], input_size)
+        preds, maxvals = keypoints_from_regression(out, centers, scales, input_size)
 
-        all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
+        all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
         all_preds[:, :, 0:2] = preds[:, :, 0:2]
         all_preds[:, :, 2:3] = maxvals
 
@@ -1101,14 +1135,18 @@ def main():
         # keypoints = transform_preds(out[0], center, scale, input_size)
 
         for i, k in enumerate(all_preds[0]):
+            image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
             result_keypoints.append(
                 image_path.split("/")[-1] + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-        result = [{"bbox": np.array(person_results_xywh), "keypoints": all_preds[0]}]
+        result = []
+        for box, preds in zip(person_results_x1y1x2y2, all_preds):
+            result.append({"bbox": np.array(box), "keypoints": preds})
+        # result = [{"bbox": np.array(person_results_x1y1x2y2), "keypoints": all_preds[0]}]
         img_vis = draw_skeleton(image_orig, result, 'body')
         cv2.imwrite("paint.png", img_vis)
 
-    # cv2.imwrite("data/inference/onnx/output/" + str(image_path.split("/")[-1]), image_orig)
+    cv2.imwrite("12345.png", image_orig)
 
     with open("results.txt", 'w') as f:
         for item in result_keypoints:

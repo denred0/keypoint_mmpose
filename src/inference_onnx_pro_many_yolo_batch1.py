@@ -4,16 +4,11 @@ import numpy as np
 import math
 import warnings
 import constants
-from torchvision.transforms import functional as F
+from pathlib import Path
+from tqdm import tqdm
 
-# from mmpose.apis import (inference_top_down_pose_model,
-#                          init_pose_model,
-#                          vis_pose_result,
-#                          process_mmdet_results)
-
-# from mmpose.mmpose.core.post_processing import (fliplr_joints,
-#
-#                                          )
+from my_darknet import load_network, detect_image
+from my_utils import recreate_folder, get_all_files_in_folder
 
 import torch
 from time import time
@@ -1016,6 +1011,63 @@ def imshow_keypoints(img,
     return img
 
 
+def yolo_inference(net_main, class_names, image_path):
+    hier_thresh = 0.3
+    nms_coeff = 0.3
+    threshold = 0.3
+
+    img = cv2.imread(str(image_path))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    detections = detect_image(net_main, class_names, img, thresh=threshold, hier_thresh=hier_thresh, nms=nms_coeff)
+
+    detections_results = []
+    for i, detection in enumerate(detections):
+
+        if float(detection[1]) / 100 > threshold:
+            current_class = detection[0]
+
+            if current_class != 'person':
+                continue
+
+            current_thresh = float(detection[1])
+            current_coords = [float(x) for x in detection[2]]
+
+            xmin = round(current_coords[0] - current_coords[2] / 2)
+            ymin = round(current_coords[1] - current_coords[3] / 2)
+            xmax = round(xmin + current_coords[2])
+            ymax = round(ymin + current_coords[3])
+
+            xmin = 0 if xmin < 0 else xmin
+            xmax = img.shape[1] if xmax > img.shape[1] else xmax
+            ymin = 0 if ymin < 0 else ymin
+            ymax = img.shape[0] if ymax > img.shape[0] else ymax
+
+            detections_results.append([xmin, ymin, xmax, ymax, round(current_thresh / 100, 2)])
+            img = plot_one_box(img, [int(xmin), int(ymin), int(xmax), int(ymax)], str(round(current_thresh / 100, 2)))
+
+    # cv2.imshow('pic', img)
+    # cv2.waitKey()
+
+    return detections_results
+
+
+def plot_one_box(im, box, label=None, color=(0, 255, 0), line_thickness=2):
+    c1 = (box[0], box[1])
+    c2 = (box[2], box[3])
+
+    tl = line_thickness or round(0.001 * (im.shape[0] + im.shape[1]) / 2) + 1  # line/font thickness
+    im = cv2.rectangle(im, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+    if label:
+        tf = max(tl - 1, 1)  # font thickness
+        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+        c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+        im = cv2.rectangle(im, c1, c2, color, -1, cv2.LINE_AA)  # filled
+        im = cv2.putText(im, label, (c1[0], c1[1] - 2), 0, tl / 3, [255, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+
+    return im
+
+
 def main():
     # body
     # input_size = [192, 256]
@@ -1025,141 +1077,133 @@ def main():
     # heatmap_size = None
 
     # wholebody
-    input_size = [192, 256]
-    num_joints = 133
+    # input_size = [192, 256]
+    # num_joints = 133
     # onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
-    onnx_model_path = "data/onnx_export/wholebody_batch10_res50_coco_wholebody_256x192.onnx"
-    heatmap_size = [48, 64]
-    batch_size = 10
+    # onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 10
 
-
+    input_size = [288, 384]
+    num_joints = 133
+    onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    heatmap_size = [72, 96]
+    batch_size = 1
+    batch_shape = (batch_size, 3, 384, 288)
+    out_shape = (batch_size, num_joints, 96, 72)
 
     pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
+
+    config_path = "yolo/model/yolov4.cfg"
+    meta_path = "yolo/model/obj.data"
+    weight_path = "yolo/model/yolov4-obj-mycustom_best.weights"
+    net_main, class_names, colors = load_network(config_path, meta_path, weight_path)
 
     if cv2.cuda.getCudaEnabledDeviceCount():
         pose_model.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
         pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
         # pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
-    # image_path = "data/inference/onnx/input/person.jpg"
-    image_path = "data/inference/base/input/persons.jpg"
+    output_folder = "data/inference/onnx/output_pro"
+    recreate_folder(output_folder)
 
-    img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    image_orig = img.copy()
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    h, w = img.shape[:2]
-
-    # person_results_xywh = [[0, 0, (w + 1), (h + 1)]]
-    #
-    # [1112, 319, 1400, 875, 0.99]
-    # [612, 66, 1100, 873, 0.99]
-
-    # [447, 218, 1099, 896, 0.99]
-
-    # person_results_xywh = [[1112, 319, 288, 556, 0.99], [612, 66, 488, 807, 0.99]]
-    # person_results_xywh = [[447, 218, 652, 678, 0.99]]
-    # person_results_x1y1x2y2 = [[447, 218, 1099, 896, 0.99]]
-
-    person_results_x1y1x2y2 = [[1112, 319, 1400, 875, 0.99], [612, 66, 1100, 873, 0.99]]
-    # person_results_x1y1x2y2 = [[612, 66, 1100, 873, 0.99]]
-    blobs = [np.zeros((1, 3, 256, 192))] * batch_size
-    centers = [np.zeros(2)] * batch_size
-    scales = [np.zeros(2)] * batch_size
-    # blobs = []
-    for i, box in enumerate(person_results_x1y1x2y2):
-        image_work = img.copy()
-        box_c = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
-        center, scale = _box2cs(input_size, box_c)
-        centers[i] = center
-        scales[i] = scale
-
-        joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
-        joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
-
-        image_work, joints_3d, joints_3d_visible = TopDownAffine(image_work, np.array(input_size), joints_3d,
-                                                                 joints_3d_visible, center,
-                                                                 scale, 0, num_joints)
-        image_work = preprocess_input(image_work, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
-                                      input_range=[0, 1])
-
-        input_blob = np.moveaxis(image_work, -1, 0)  # [height, width, channels]->[channels, height, width]
-
-        input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
-
-        # blobs.append(input_blob)
-        blobs[i] = input_blob  # += blobs + input_blob
-
-    # input_blob2 =
-
-    blob_batch = np.concatenate(tuple(blobs))
-
-    pose_model.setInput(blob_batch)  # Set input of model
-
-    with torch.no_grad():
-        out = pose_model.forward()
+    images = get_all_files_in_folder(Path("data/inference/onnx/input_pro"), ["*"])
 
     result_keypoints = []
-    if heatmap_size:
-        preds, maxvals = keypoints_from_heatmaps(
-            out,
-            centers,
-            scales,
-            unbiased=False,
-            post_process='default',
-            kernel=11,
-            valid_radius_factor=0.0546875,
-            use_udp=False,
-            target_type='GaussianHeatmap')
+    duration = 0
+    for im in tqdm(images):
 
-        all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
-        all_preds[:, :, 0:2] = preds[:, :, 0:2]
-        all_preds[:, :, 2:3] = maxvals
+        img = cv2.imread(str(im), cv2.IMREAD_COLOR)
+        image_orig = img.copy()
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # visualization
-        # img = image_path
-        # result = [{"bbox": np.array(person_results_x1y1x2y2), "keypoints": all_preds[0]}]
-        result = []
-        for box, preds in zip(person_results_x1y1x2y2, all_preds):
-            result.append({"bbox": np.array(box), "keypoints": preds})
+        person_results_x1y1x2y2 = yolo_inference(net_main, class_names, im)
 
-        img_vis = draw_skeleton(image_orig, result, 'wholebody')
-        cv2.imwrite("paint.png", img_vis)
+        outs = [np.zeros(out_shape)] * len(person_results_x1y1x2y2)
+        centers = [np.zeros(2)] * len(person_results_x1y1x2y2)
+        scales = [np.zeros(2)] * len(person_results_x1y1x2y2)
+        for i, box in enumerate(person_results_x1y1x2y2):
+            image_work = img.copy()
+            box_c = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
+            center, scale = _box2cs(input_size, box_c)
+            centers[i] = center
+            scales[i] = scale
 
-        for i, p in enumerate(all_preds[0]):
-            # image_orig = cv2.circle(image_orig, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
-            result_keypoints.append(
-                image_path.split("/")[-1] + " " + str(i) + " " + str(p[0]) + " " + str(p[1]))
+            joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
+            joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
 
-    else:
+            image_work, joints_3d, joints_3d_visible = TopDownAffine(image_work, np.array(input_size), joints_3d,
+                                                                     joints_3d_visible, center,
+                                                                     scale, 0, num_joints)
+            image_work = preprocess_input(image_work, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
+                                          input_range=[0, 1])
 
-        preds, maxvals = keypoints_from_regression(out, centers, scales, input_size)
+            input_blob = np.moveaxis(image_work, -1, 0)  # [height, width, channels]->[channels, height, width]
+            input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
 
-        all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
-        all_preds[:, :, 0:2] = preds[:, :, 0:2]
-        all_preds[:, :, 2:3] = maxvals
+            pose_model.setInput(input_blob)  # Set input of model
 
-        # out = out * input_size
-        # keypoints = transform_preds(out[0], center, scale, input_size)
+            start = time()
+            with torch.no_grad():
+                out = pose_model.forward()
+            duration += time() - start
 
-        for i, k in enumerate(all_preds[0]):
-            image_orig = cv2.circle(image_orig, (round(k[0]), round(k[1])), 3, (0, 255, 0), -1)
-            result_keypoints.append(
-                image_path.split("/")[-1] + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
+            outs[i] = out
 
-        result = []
-        for box, preds in zip(person_results_x1y1x2y2, all_preds):
-            result.append({"bbox": np.array(box), "keypoints": preds})
-        # result = [{"bbox": np.array(person_results_x1y1x2y2), "keypoints": all_preds[0]}]
-        img_vis = draw_skeleton(image_orig, result, 'body')
-        cv2.imwrite("paint.png", img_vis)
+        if len(person_results_x1y1x2y2):
+            out_batch = np.concatenate(tuple(outs))
 
-    cv2.imwrite("12345.png", image_orig)
+            if heatmap_size:
+                preds, maxvals = keypoints_from_heatmaps(
+                    out_batch,
+                    centers,
+                    scales,
+                    unbiased=False,
+                    post_process='default',
+                    kernel=11,
+                    valid_radius_factor=0.0546875,
+                    use_udp=False,
+                    target_type='GaussianHeatmap')
+
+                all_preds = np.zeros((len(person_results_x1y1x2y2), preds.shape[1], 3), dtype=np.float32)
+                all_preds[:, :, 0:2] = preds[:, :, 0:2]
+                all_preds[:, :, 2:3] = maxvals
+
+                # visualization
+                result = []
+                for box, preds in zip(person_results_x1y1x2y2, all_preds):
+                    result.append({"bbox": np.array(box), "keypoints": preds})
+
+                image_orig = draw_skeleton(image_orig, result, 'wholebody')
+
+                for i, p in enumerate(all_preds[0]):
+                    result_keypoints.append(
+                        im.name + " " + str(i) + " " + str(p[0]) + " " + str(p[1]))
+
+            else:
+
+                preds, maxvals = keypoints_from_regression(out_batch, centers, scales, input_size)
+
+                all_preds = np.zeros((len(person_results_x1y1x2y2), preds.shape[1], 3), dtype=np.float32)
+                all_preds[:, :, 0:2] = preds[:, :, 0:2]
+                all_preds[:, :, 2:3] = maxvals
+
+                for i, k in enumerate(all_preds[0]):
+                    result_keypoints.append(
+                        im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
+
+                result = []
+                for box, preds in zip(person_results_x1y1x2y2, all_preds):
+                    result.append({"bbox": np.array(box), "keypoints": preds})
+                image_orig = draw_skeleton(image_orig, result, 'body')
+
+        cv2.imwrite(output_folder + "/" + im.name, image_orig)
+
+    print(f"FPS skeletons: {round(len(images) / duration, 2)}")
 
     with open("results.txt", 'w') as f:
         for item in result_keypoints:
             f.write("%s\n" % item)
-
-    print(result_keypoints)
 
 
 if __name__ == "__main__":

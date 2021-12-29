@@ -1111,8 +1111,10 @@ def main():
 
     result_keypoints = []
     duration = 0
+    duration_frame = 0
     for im in tqdm(images):
 
+        start_frame = time()
         img = cv2.imread(str(im), cv2.IMREAD_COLOR)
         image_orig = img.copy()
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -1197,9 +1199,11 @@ def main():
                     result.append({"bbox": np.array(box), "keypoints": preds})
                 image_orig = draw_skeleton(image_orig, result, 'body')
 
+        duration_frame += time() - start_frame
         cv2.imwrite(output_folder + "/" + im.name, image_orig)
 
     print(f"FPS skeletons: {round(len(images) / duration, 2)}")
+    print(f"FPS frame: {round(len(images) / duration_frame, 2)}")
 
     with open("results.txt", 'w') as f:
         for item in result_keypoints:

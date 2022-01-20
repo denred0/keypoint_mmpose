@@ -1031,16 +1031,16 @@ def imshow_keypoints(img,
 
 def main():
     # body
-    # input_size = [192, 256]
-    # num_joints = 17
-    # onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
-    # heatmap_size = None
+    input_size = [192, 256]
+    num_joints = 17
+    onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
+    heatmap_size = None
 
     # wholebody
-    input_size = [192, 256]
-    num_joints = 133
-    onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
-    heatmap_size = [48, 64]
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
 
     # input_size = [288, 384]
     # num_joints = 133

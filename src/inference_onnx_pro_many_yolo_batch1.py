@@ -1,5 +1,6 @@
 import cv2
 import os
+import json
 import numpy as np
 import math
 import warnings
@@ -1043,11 +1044,33 @@ def yolo_inference(net_main, class_names, image_path):
             ymin = 0 if ymin < 0 else ymin
             ymax = img.shape[0] if ymax > img.shape[0] else ymax
 
-            detections_results.append([xmin, ymin, xmax, ymax, round(current_thresh / 100, 2)])
-            img = plot_one_box(img, [int(xmin), int(ymin), int(xmax), int(ymax)], str(round(current_thresh / 100, 2)))
+            detections_results.append(
+                [class_names.index("person"), xmin, ymin, xmax, ymax, round(current_thresh / 100, 2)])
+            # img = plot_one_box(img, [int(xmin), int(ymin), int(xmax), int(ymax)], str(round(current_thresh / 100, 2)))
 
     # cv2.imshow('pic', img)
     # cv2.waitKey()
+
+    return detections_results
+
+
+def yolo_inference_opencv(net_main, im):
+    nms_coeff = 0.3
+    threshold = 0.3
+
+    img = cv2.imread(str(im))
+    # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    classes, confidences, boxes = net_main.detect(img, confThreshold=threshold, nmsThreshold=nms_coeff)
+
+    detections_results = []
+    if len(classes) != 0:
+        for classId, confidence, box in zip(classes.flatten(), confidences.flatten(), boxes):
+            if classId == 6:  # person
+                left, top, width, height = box
+                detections_results.append([classId, left, top, (left + width), (top + height), round(confidence, 2)])
+                # img = plot_one_box(img, [int(left), int(top), int(left + width), int(top + height)],
+                #                    str(round(confidence, 2)))
 
     return detections_results
 
@@ -1073,32 +1096,46 @@ def main():
     # input_size = [192, 256]
     # num_joints = 17
     # # onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
-    # onnx_model_path = "data/onnx_export/body_batch2_res50_coco_256x192.onnx"
+    # onnx_model_path = "data/onnx_export/body_deeppose_res50_coco_256x192.onnx"
     # heatmap_size = None
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints)
 
     # wholebody
-    # input_size = [192, 256]
-    # num_joints = 133
-    # onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
-    # onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
-    # heatmap_size = [48, 64]
-    # batch_size = 10
-
-    input_size = [288, 384]
+    input_size = [192, 256]
     num_joints = 133
-    onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
-    heatmap_size = [72, 96]
+    onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
+    # onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    heatmap_size = [48, 64]
     batch_size = 1
-    batch_shape = (batch_size, 3, 384, 288)
-    out_shape = (batch_size, num_joints, 96, 72)
+    out_shape = (batch_size, num_joints, 64, 48)
 
-    pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # batch_shape = (batch_size, 3, 384, 288)
+    # out_shape = (batch_size, num_joints, 96, 72)
 
-    config_path = "yolo/model/yolov4.cfg"
+    config_path = "yolo/model/yolov4-obj-mycustom.cfg"
     meta_path = "yolo/model/obj.data"
     weight_path = "yolo/model/yolov4-obj-mycustom_best.weights"
+
+    # yolo my_darknet
     net_main, class_names, colors = load_network(config_path, meta_path, weight_path)
 
+    # yolo opencv
+    net_main_dnn = cv2.dnn_DetectionModel(config_path, weight_path)
+    if cv2.cuda.getCudaEnabledDeviceCount():
+        net_main_dnn.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+        net_main_dnn.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+        # net_main_dnn.setPreferableTarget(cv.dnn.DNN_TARGET_CUDA_FP16)
+    net_main_dnn.setInputSize((608, 608))
+    net_main_dnn.setInputScale(1.0 / 255)
+    net_main_dnn.setInputSwapRB(True)
+
+    pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
     if cv2.cuda.getCudaEnabledDeviceCount():
         pose_model.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
         pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
@@ -1110,8 +1147,16 @@ def main():
     images = get_all_files_in_folder(Path("data/inference/onnx/input_pro"), ["*"])
 
     result_keypoints = []
-    duration = 0
+    duration_keypoint = 0
+    duration_pred = 0
+    duration_post = 0
+    duration_draw = 0
+    duration_affine = 0
+    duration_detection = 0
     duration_frame = 0
+
+    results_for_json = []
+
     for im in tqdm(images):
 
         start_frame = time()
@@ -1119,8 +1164,15 @@ def main():
         image_orig = img.copy()
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        person_results_x1y1x2y2 = yolo_inference(net_main, class_names, im)
+        start_detection = time()
+        # person_results = yolo_inference(net_main, class_names, im)
+        person_results = yolo_inference_opencv(net_main_dnn, im)
 
+        person_results_x1y1x2y2 = [p[1:] for p in person_results]
+
+        duration_detection += time() - start_detection
+
+        start_pred = time()
         outs = [np.zeros(out_shape)] * len(person_results_x1y1x2y2)
         centers = [np.zeros(2)] * len(person_results_x1y1x2y2)
         scales = [np.zeros(2)] * len(person_results_x1y1x2y2)
@@ -1134,9 +1186,11 @@ def main():
             joints_3d = np.zeros((num_joints, 3), dtype=np.float32)
             joints_3d_visible = np.zeros((num_joints, 3), dtype=np.float32)
 
+            start_affine = time()
             image_work, joints_3d, joints_3d_visible = TopDownAffine(image_work, np.array(input_size), joints_3d,
                                                                      joints_3d_visible, center,
                                                                      scale, 0, num_joints)
+            duration_affine += time() - start_affine
             image_work = preprocess_input(image_work, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
                                           input_range=[0, 1])
 
@@ -1145,13 +1199,18 @@ def main():
 
             pose_model.setInput(input_blob)  # Set input of model
 
-            start = time()
+            start_keypoint = time()
             with torch.no_grad():
                 out = pose_model.forward()
-            duration += time() - start
+            duration_keypoint += time() - start_keypoint
 
             outs[i] = out
 
+        duration_pred += time() - start_pred
+
+        start_post = time()
+        result = []
+        result_json = []
         if len(person_results_x1y1x2y2):
             out_batch = np.concatenate(tuple(outs))
 
@@ -1172,15 +1231,17 @@ def main():
                 all_preds[:, :, 2:3] = maxvals
 
                 # visualization
-                result = []
-                for box, preds in zip(person_results_x1y1x2y2, all_preds):
-                    result.append({"bbox": np.array(box), "keypoints": preds})
+                for box, preds in zip(person_results, all_preds):
+                    result.append({"bbox": np.array(box[1:]), "keypoints": preds})
+                    result_json.append({"bbox": np.array(box), "keypoints": preds})
 
+                start_draw = time()
                 image_orig = draw_skeleton(image_orig, result, 'wholebody')
+                duration_draw += time() - start_draw
 
-                for i, p in enumerate(all_preds[0]):
+                for i, k in enumerate(all_preds[0]):
                     result_keypoints.append(
-                        im.name + " " + str(i) + " " + str(p[0]) + " " + str(p[1]))
+                        im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
             else:
 
@@ -1194,20 +1255,105 @@ def main():
                     result_keypoints.append(
                         im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
-                result = []
-                for box, preds in zip(person_results_x1y1x2y2, all_preds):
-                    result.append({"bbox": np.array(box), "keypoints": preds})
+                for box, preds in zip(person_results, all_preds):
+                    result.append({"bbox": np.array(box[1:]), "keypoints": preds})
+                    result_json.append({"bbox": np.array(box), "keypoints": preds})
+
+                start_draw = time()
                 image_orig = draw_skeleton(image_orig, result, 'body')
+                duration_draw += time() - start_draw
+
+        duration_post += time() - start_post
 
         duration_frame += time() - start_frame
         cv2.imwrite(output_folder + "/" + im.name, image_orig)
 
-    print(f"FPS skeletons: {round(len(images) / duration, 2)}")
-    print(f"FPS frame: {round(len(images) / duration_frame, 2)}")
+        results_for_json.append({"image": im.name, "result": result_json})
+
+    write_json_results(results_for_json)
+
+    acc = 4
+    # print(
+    #     f"affine, ms: {round(duration_affine / len(images), acc)} {round((duration_affine / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
+
+    # print(f"Detection FPS: {round(len(images) / duration_detection, acc)}")
+    print(
+        f"\ndetection, ms: {round(duration_detection / len(images), acc)} {round((duration_detection / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    print()
+
+    print(
+        f"pred, ms: {round(duration_pred / len(images), acc)} {round((duration_pred / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    print()
+
+    # print(f"Skeletons FPS: {round(len(images) / duration_keypoint, acc)}")
+    print(
+        f"skeletons, ms: {round(duration_keypoint / len(images), acc)} {round((duration_keypoint / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    print()
+
+    print(
+        f"post, ms: {round(duration_post / len(images), acc)} {round((duration_post / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    print()
+
+    print(
+        f"draw, ms: {round(duration_draw / len(images), acc)} {round((duration_draw / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    print()
+
+    print(f"frame FPS : {round(len(images) / duration_frame, acc)}")
+    print(f"frame, ms: {round(duration_frame / len(images), acc)}")
 
     with open("results.txt", 'w') as f:
         for item in result_keypoints:
             f.write("%s\n" % item)
+
+
+def write_json_results(results):
+    data = []
+
+    for r in results:
+
+        image = r['image']
+        bboxes_keypoints = r['result']
+
+        image_data = []
+
+        for bk in bboxes_keypoints:
+            bbox = bk['bbox']
+            keypoints = bk['keypoints']
+
+            i = 0
+
+            # box append
+            image_data.append({"Number": i,
+                               "MasterObj": -1,
+                               "ClassID": int(bbox[0]),
+                               "SubClassID": -1,
+                               "Probability": float(str(round(bbox[5], 2))),
+                               "Position_x": int(bbox[1]),
+                               "Position_y": int(bbox[2]),
+                               "Size_x": int(bbox[3] - bbox[1]),
+                               "Size_y": int(bbox[4] - bbox[2])})
+
+            master_obj = i
+            i += 1
+            for k, points in enumerate(keypoints):
+                image_data.append({"Number": i,
+                                   "MasterObj": master_obj,
+                                   "ClassID": int(bbox[0]),
+                                   "SubClassID": k,
+                                   "Probability": float(str(round(points[2], 2))),
+                                   "Position_x": int(points[0]),
+                                   "Position_y": int(points[1])})
+                i += 1
+
+        data.append(image_data)
+
+    with open("results_json.txt", 'w') as f:
+        for item in data:
+            f.write("%s\n" % item)
+
+    # with open('123.json', 'w') as outfile:
+    #     json.dump(data, outfile, indent=0)
 
 
 if __name__ == "__main__":

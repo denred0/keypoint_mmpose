@@ -1032,8 +1032,6 @@ def main():
     heatmap_size = [48, 64]
     batch_size = 10
 
-
-
     pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
 
     if cv2.cuda.getCudaEnabledDeviceCount():
@@ -1128,7 +1126,7 @@ def main():
         for i, p in enumerate(all_preds[0]):
             # image_orig = cv2.circle(image_orig, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
             result_keypoints.append(
-                image_path.split("/")[-1] + " " + str(i) + " " + str(p[0]) + " " + str(p[1]))
+                image_path.split("/")[-1] + " " + str(i) + " " + str(round(p[0])) + " " + str(round(p[1])))
 
     else:
 

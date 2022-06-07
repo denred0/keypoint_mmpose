@@ -1,8 +1,8 @@
 import numpy as np
 from tqdm import tqdm
 
-pytorch_file = "wholebody_res50_result.txt"
-onnx_file = "results_onnx.txt"
+pytorch_file = "results_pytorch.txt"
+onnx_file = "data/merge_txt_files/output/merged.txt"
 
 with open(pytorch_file) as file:
     pytorch_lines = file.readlines()
@@ -19,14 +19,14 @@ print(f"PyTorch count: {len(pytorch_lines)}")
 print(f"ONNX count:    {len(onnx_lines)}")
 print()
 
-for pytorch in tqdm(pytorch_lines[:10000]):
+for pytorch in tqdm(pytorch_lines[:5000]):
     p_values = pytorch.split(" ")
     p_file = p_values[0]
     p_point = p_values[1]
     p_x = p_values[2]
     p_y = p_values[3]
 
-    for onnx in onnx_lines[:10000]:
+    for onnx in onnx_lines[:5000]:
         o_values = onnx.split(" ")
         o_file = o_values[0]
         o_point = o_values[1]
@@ -39,7 +39,7 @@ for pytorch in tqdm(pytorch_lines[:10000]):
 
             dif_result.append([o_file, o_point, dif_x, dif_y])
 
-            if dif_y > 15 or dif_y > 15:
+            if dif_x > 100 or dif_y > 100:
                 dif_result_bad.append([o_file, o_point, dif_x, dif_y])
 
 dif_x_mean = np.mean([x[2] for x in dif_result])

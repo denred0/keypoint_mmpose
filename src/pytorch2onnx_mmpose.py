@@ -73,7 +73,13 @@ def pytorch2onnx(model,
         export_params=True,
         keep_initializers_as_inputs=True,
         verbose=show,
-        opset_version=opset_version)
+        opset_version=opset_version,
+        # input_names=["x"],
+        # dynamic_axes={
+        #     # dict value: manually named axes
+        #     "x": [0]
+        # }
+    )
 
     print(f'Successfully exported ONNX model: {output_file}')
     if verify:
@@ -135,20 +141,28 @@ if __name__ == '__main__':
     # config = "configs_mmpose/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192.py"
     # checkpoint = "pretrained_weights/mmpose/body/deeppose_res50_coco_256x192-f6de6c0e_20210205.pth"
 
-    # config = "configs_mmpose/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/res50_coco_wholebody_256x192.py"
-    # checkpoint = "pretrained_weights/mmpose/wholebody/res50_coco_wholebody_256x192-9e37ed88_20201004.pth"
+    # config = "mmpose/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_384x288_dark.py"
+    # checkpoint = "pretrained_weights/mmpose/body/hrnet_w48_coco_384x288_dark-e881a4b6_20210203.pth"
 
-    config = "mmpose/configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/hrnet_w48_coco_wholebody_384x288_dark_plus.py"
-    checkpoint = "pretrained_weights/mmpose/wholebody/hrnet_w48_coco_wholebody_384x288_dark-f5726563_20200918.pth"
+    # config = "mmpose/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/2xmspn50_coco_256x192.py"
+    # checkpoint = "pretrained_weights/mmpose/body/2xmspn50_coco_256x192-c8765a5c_20201123.pth"
 
+    config = "mmpose/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192_udp.py"
+    checkpoint = "pretrained_weights/mmpose/body/hrnet_w32_coco_256x192_udp-aba0be42_20210220.pth"
 
     # shape = torch.randn(1, 3, 640, 480, requires_grad=True)
 
     # data_cfg = dict(image_size=[192, 256]) - это высота и ширина
-    # shape то же должен быть в формате (batch, channels, height, weight)
+    # shape тоже должен быть в формате (batch, channels, weight,  height)
     # res50_coco_wholebody_256x192.py
-    shape = (10, 3, 288, 384)  # (1, 3, 256, 192)
-    name = "wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    shape = (1, 3, 256, 192)  # (1, 3, 256, 192)
+    batch = 1
+    # shape = (batch, 3, 384, 288)  # (1, 3, 256, 192)
+
+    model_type = "body"
+    model_name = config.split("/")[len(config.split("/")) - 1].split(".")[0]
+    name = f"{model_type}_topdownheatmap_batch_{batch}_{model_name}.onnx"
+    # name = "body_deeppose_res50_coco_256x192.onnx"
 
     model = init_pose_model(config, checkpoint, device='cpu')
     model = _convert_batchnorm(model)
@@ -167,4 +181,5 @@ if __name__ == '__main__':
         opset_version=11,
         show=False,
         output_file="data/onnx_export/" + name,
+        # output_file=name,
         verify=True)

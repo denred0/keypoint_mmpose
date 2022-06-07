@@ -436,6 +436,7 @@ def post_dark_udp(coords, batch_heatmaps, kernel=3):
     np.log(batch_heatmaps, batch_heatmaps)
     batch_heatmaps = np.transpose(batch_heatmaps,
                                   (2, 3, 0, 1)).reshape(H, W, -1)
+
     batch_heatmaps_pad = cv2.copyMakeBorder(
         batch_heatmaps, 1, 1, 1, 1, borderType=cv2.BORDER_REFLECT)
     batch_heatmaps_pad = np.transpose(
@@ -662,7 +663,7 @@ def keypoints_from_regression(regression_preds, center, scale, img_size):
     return preds, maxvals
 
 
-def draw_skeleton(img, result, skeleton_type):
+def draw_skeleton(img, result, skeleton_type, kpt_score_thr, show_keypoint_weight):
     skeleton = constants.skeleton[skeleton_type]
     pose_kpt_color = np.array(constants.pose_kpt_color[skeleton_type])
     pose_link_color = np.array(constants.pose_link_color[skeleton_type])
@@ -675,10 +676,11 @@ def draw_skeleton(img, result, skeleton_type):
         thickness=1,
         pose_kpt_color=pose_kpt_color,
         pose_link_color=pose_link_color,
-        kpt_score_thr=0.3,
+        kpt_score_thr=kpt_score_thr,
         bbox_color=[(0, 255, 0)] * len(result),
         show=False,
-        out_file=None)
+        out_file=None,
+        show_keypoint_weight=show_keypoint_weight)
 
     return img_vis
 
@@ -759,7 +761,7 @@ def show_result(img,
     if pose_result:
         imshow_keypoints(img, pose_result, skeleton, kpt_score_thr,
                          pose_kpt_color, pose_link_color, radius,
-                         thickness)
+                         thickness, show_keypoint_weight)
 
     if show:
         cv2.imshow(win_name, img)
@@ -946,7 +948,7 @@ def imshow_keypoints(img,
             assert len(pose_kpt_color) == len(kpts)
             for kid, kpt in enumerate(kpts):
                 x_coord, y_coord, kpt_score = int(kpt[0]), int(kpt[1]), kpt[2]
-                if kpt_score > kpt_score_thr:
+                if kpt_score > kpt_score_thr and kid < 17:
                     if show_keypoint_weight:
                         img_copy = img.copy()
                         r, g, b = pose_kpt_color[kid]
@@ -1056,7 +1058,7 @@ def yolo_inference(net_main, class_names, image_path):
 
 def yolo_inference_opencv(net_main, im):
     nms_coeff = 0.3
-    threshold = 0.3
+    threshold = 0.5
 
     img = cv2.imread(str(im))
     # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -1066,7 +1068,7 @@ def yolo_inference_opencv(net_main, im):
     detections_results = []
     if len(classes) != 0:
         for classId, confidence, box in zip(classes.flatten(), confidences.flatten(), boxes):
-            if classId == 6:  # person
+            if classId == 0:  # person
                 left, top, width, height = box
                 detections_results.append([classId, left, top, (left + width), (top + height), round(confidence, 2)])
                 # img = plot_one_box(img, [int(left), int(top), int(left + width), int(top + height)],
@@ -1101,29 +1103,527 @@ def main():
     # batch_size = 1
     # out_shape = (batch_size, num_joints)
 
-    # wholebody
-    input_size = [192, 256]
-    num_joints = 133
-    onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
-    # onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
-    heatmap_size = [48, 64]
-    batch_size = 1
-    out_shape = (batch_size, num_joints, 64, 48)
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_deeppose_batch1_res101_coco_256x192.onnx"
+    # heatmap_size = None
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_deeppose_batch1_res152_coco_256x192.onnx"
+    # heatmap_size = None
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints)
+
+    # input_size = [256, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hourglass52_coco_256x256.onnx"
+    # heatmap_size = [64, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 64)
+
+    # input_size = [384, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hourglass52_coco_384x384.onnx"
+    # heatmap_size = [96, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 96)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192_coarsedropout.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192_gridmask.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192_photometric.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res50_coco_256x192_fp16_dynamic.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
 
     # input_size = [288, 384]
-    # num_joints = 133
-    # onnx_model_path = "data/onnx_export/wholebody_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res50_coco_384x288.onnx"
     # heatmap_size = [72, 96]
     # batch_size = 1
-    # batch_shape = (batch_size, 3, 384, 288)
     # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res101_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res101_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res152_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res152_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_rsn18_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_rsn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_2xrsn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_3xrsn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext50_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext101_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext101_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext152_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnext152_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_mspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_2xmspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_3xmspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_4xmspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_vgg16_bn_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res50_coco_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res50_coco_384x288_dark.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res101_coco_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res101_coco_384x288_dark.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res152_coco_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_res152_coco_384x288_dark.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192_udp.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_384x288_udp.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_256x192_udp.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_384x288_udp.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_alexnet_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet50_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet101_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet101_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet152_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_seresnet152_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_shufflenetv1_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_shufflenetv1_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_cpm_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_cpm_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w32_coco_384x288_dark.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_256x192_dark.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_hrnet_w48_coco_384x288_dark.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_scnet50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_scnet50_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_scnet101_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_scnet101_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d50_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d101_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d101_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d152_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    # input_size = [288, 384]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_resnetv1d152_coco_384x288.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 96, 72)
+
+    # wholebody
+    # input_size = [192, 256]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_res50_coco_wholebody_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
+
+    input_size = [288, 384]
+    num_joints = 133
+    onnx_model_path = "data/onnx_export/wholebody_topdownheatmap_batch_dynamic_hrnet_w48_coco_wholebody_384x288_dark_plus_custom.onnx"
+    heatmap_size = [72, 96]
+    batch_size = 1
+    batch_shape = (batch_size, 3, 384, 288)
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_dynamic_batch_mspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+
+    # input_size = [192, 256]
+    # num_joints = 17
+    # # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_2xmspn50_coco_256x192.onnx"
+    # onnx_model_path = "data/onnx_export/body_topdownheatmap_batch1_2xmspn50_coco_256x192.onnx"
+    # heatmap_size = [48, 64]
+    # batch_size = 1
+    # out_shape = (batch_size, num_joints, 64, 48)
 
     config_path = "yolo/model/yolov4-obj-mycustom.cfg"
     meta_path = "yolo/model/obj.data"
     weight_path = "yolo/model/yolov4-obj-mycustom_best.weights"
 
+    folder = "08_55_07"
+    # exp = "body2xmspn50"
+    exp = "wholebody384x288darkplus"
+    images = get_all_files_in_folder("data/inference/onnx/input_pro/" + folder, ["*"])
+    output_folder = "data/inference/onnx/output_pro/" + folder + "_" + exp
+    recreate_folder(output_folder)
+
+    output_folder_affine = "data/inference/onnx/output_pro_affine/" + folder + "_" + exp
+    recreate_folder(output_folder_affine)
+
     # yolo my_darknet
-    net_main, class_names, colors = load_network(config_path, meta_path, weight_path)
+    # net_main, class_names, colors = load_network(config_path, meta_path, weight_path)
 
     # yolo opencv
     net_main_dnn = cv2.dnn_DetectionModel(config_path, weight_path)
@@ -1131,7 +1631,7 @@ def main():
         net_main_dnn.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
         net_main_dnn.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
         # net_main_dnn.setPreferableTarget(cv.dnn.DNN_TARGET_CUDA_FP16)
-    net_main_dnn.setInputSize((608, 608))
+    net_main_dnn.setInputSize((640, 384))
     net_main_dnn.setInputScale(1.0 / 255)
     net_main_dnn.setInputSwapRB(True)
 
@@ -1140,11 +1640,6 @@ def main():
         pose_model.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
         pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
         # pose_model.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
-
-    output_folder = "data/inference/onnx/output_pro"
-    recreate_folder(output_folder)
-
-    images = get_all_files_in_folder(Path("data/inference/onnx/input_pro"), ["*"])
 
     result_keypoints = []
     duration_keypoint = 0
@@ -1173,7 +1668,7 @@ def main():
         duration_detection += time() - start_detection
 
         start_pred = time()
-        outs = [np.zeros(out_shape)] * len(person_results_x1y1x2y2)
+        arr = np.zeros((len(person_results_x1y1x2y2), 3, 384, 288), int)
         centers = [np.zeros(2)] * len(person_results_x1y1x2y2)
         scales = [np.zeros(2)] * len(person_results_x1y1x2y2)
         for i, box in enumerate(person_results_x1y1x2y2):
@@ -1190,6 +1685,9 @@ def main():
             image_work, joints_3d, joints_3d_visible = TopDownAffine(image_work, np.array(input_size), joints_3d,
                                                                      joints_3d_visible, center,
                                                                      scale, 0, num_joints)
+
+            # cv2.imwrite(os.path.join(output_folder_affine, im.stem + "_" + str(i) + ".jpg"), image_work)
+
             duration_affine += time() - start_affine
             image_work = preprocess_input(image_work, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
                                           input_range=[0, 1])
@@ -1197,30 +1695,33 @@ def main():
             input_blob = np.moveaxis(image_work, -1, 0)  # [height, width, channels]->[channels, height, width]
             input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
 
-            pose_model.setInput(input_blob)  # Set input of model
+            arr[i] = input_blob
 
+        pose_model.setInput(arr)  # Set input of model
+
+        if len(person_results_x1y1x2y2):
             start_keypoint = time()
             with torch.no_grad():
                 out = pose_model.forward()
             duration_keypoint += time() - start_keypoint
 
-            outs[i] = out
+            duration_pred += time() - start_pred
 
-        duration_pred += time() - start_pred
-
-        start_post = time()
-        result = []
-        result_json = []
-        if len(person_results_x1y1x2y2):
-            out_batch = np.concatenate(tuple(outs))
+            start_post = time()
+            result = []
+            result_json = []
+            kpt_score_thr = 0.5
+            show_keypoint_weight = False
+            # if len(person_results_x1y1x2y2):
+                # out_batch = np.concatenate(tuple(outs))
 
             if heatmap_size:
                 preds, maxvals = keypoints_from_heatmaps(
-                    out_batch,
+                    out,
                     centers,
                     scales,
                     unbiased=False,
-                    post_process='default',
+                    post_process='unbiased',
                     kernel=11,
                     valid_radius_factor=0.0546875,
                     use_udp=False,
@@ -1236,7 +1737,7 @@ def main():
                     result_json.append({"bbox": np.array(box), "keypoints": preds})
 
                 start_draw = time()
-                image_orig = draw_skeleton(image_orig, result, 'wholebody')
+                image_orig = draw_skeleton(image_orig, result, num_joints, kpt_score_thr, show_keypoint_weight)
                 duration_draw += time() - start_draw
 
                 for i, k in enumerate(all_preds[0]):
@@ -1244,8 +1745,7 @@ def main():
                         im.name + " " + str(i) + " " + str(round(k[0])) + " " + str(round(k[1])))
 
             else:
-
-                preds, maxvals = keypoints_from_regression(out_batch, centers, scales, input_size)
+                preds, maxvals = keypoints_from_regression(out, centers, scales, input_size)
 
                 all_preds = np.zeros((len(person_results_x1y1x2y2), preds.shape[1], 3), dtype=np.float32)
                 all_preds[:, :, 0:2] = preds[:, :, 0:2]
@@ -1260,47 +1760,57 @@ def main():
                     result_json.append({"bbox": np.array(box), "keypoints": preds})
 
                 start_draw = time()
-                image_orig = draw_skeleton(image_orig, result, 'body')
+                image_orig = draw_skeleton(image_orig, result, num_joints, kpt_score_thr, show_keypoint_weight)
                 duration_draw += time() - start_draw
 
-        duration_post += time() - start_post
 
-        duration_frame += time() - start_frame
-        cv2.imwrite(output_folder + "/" + im.name, image_orig)
 
-        results_for_json.append({"image": im.name, "result": result_json})
+                # skelet_crop = image_orig[:]
 
-    write_json_results(results_for_json)
+            duration_post += time() - start_post
+
+            duration_frame += time() - start_frame
+            cv2.imwrite(output_folder + "/" + im.name, image_orig)
+
+            results_for_json.append({"image": im.name, "result": result_json})
+
+    # write_json_results(results_for_json)
 
     acc = 4
     # print(
-    #     f"affine, ms: {round(duration_affine / len(images), acc)} {round((duration_affine / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    #     f"affine, sec: {round(duration_affine / len(images), acc)} {round((duration_affine / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
     # print()
 
     # print(f"Detection FPS: {round(len(images) / duration_detection, acc)}")
+    # print(
+    #     f"\ndetection, sec: {round(duration_detection / len(images), acc)} {round((duration_detection / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
+
+    predproc = round(duration_pred / len(images), acc)
     print(
-        f"\ndetection, ms: {round(duration_detection / len(images), acc)} {round((duration_detection / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
-    print()
+        f"pred, sec: {predproc} {round((duration_pred / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
+
+    print(f"Skeletons FPS: {round(len(images) / duration_keypoint, acc)}")
+    skeleton = round(duration_keypoint / len(images), acc)
+    print(
+        f"skeletons, sec: {skeleton} {round((duration_keypoint / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
+
+    postproc = round(duration_post / len(images), acc)
+    print(
+        f"post, sec: {postproc} {round((duration_post / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
 
     print(
-        f"pred, ms: {round(duration_pred / len(images), acc)} {round((duration_pred / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
-    print()
+        f"all skeleton, sec: {predproc + +skeleton + postproc} {round((duration_post / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
 
-    # print(f"Skeletons FPS: {round(len(images) / duration_keypoint, acc)}")
-    print(
-        f"skeletons, ms: {round(duration_keypoint / len(images), acc)} {round((duration_keypoint / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
-    print()
+    # print(
+    #     f"draw, sec: {round(duration_draw / len(images), acc)} {round((duration_draw / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
+    # print()
 
-    print(
-        f"post, ms: {round(duration_post / len(images), acc)} {round((duration_post / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
-    print()
-
-    print(
-        f"draw, ms: {round(duration_draw / len(images), acc)} {round((duration_draw / len(images)) * 100 / (duration_frame / len(images)), 1)}%")
-    print()
-
-    print(f"frame FPS : {round(len(images) / duration_frame, acc)}")
-    print(f"frame, ms: {round(duration_frame / len(images), acc)}")
+    # print(f"frame FPS : {round(len(images) / duration_frame, acc)}")
+    print(f"frame, sec: {round(duration_frame / len(images), acc)}")
 
     with open("results.txt", 'w') as f:
         for item in result_keypoints:
@@ -1312,6 +1822,8 @@ def write_json_results(results):
 
     for r in results:
 
+        i = 0
+
         image = r['image']
         bboxes_keypoints = r['result']
 
@@ -1320,8 +1832,6 @@ def write_json_results(results):
         for bk in bboxes_keypoints:
             bbox = bk['bbox']
             keypoints = bk['keypoints']
-
-            i = 0
 
             # box append
             image_data.append({"Number": i,
@@ -1350,10 +1860,10 @@ def write_json_results(results):
 
     with open("results_json.txt", 'w') as f:
         for item in data:
-            f.write("%s\n" % item)
+            f.write("%s\n" % str(item).replace("\'", "\""))
 
-    # with open('123.json', 'w') as outfile:
-    #     json.dump(data, outfile, indent=0)
+    with open('123.json', 'w') as outfile:
+        json.dump(data, outfile, indent=4)
 
 
 if __name__ == "__main__":

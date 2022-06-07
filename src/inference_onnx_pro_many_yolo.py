@@ -1084,16 +1084,25 @@ def main():
     # heatmap_size = [48, 64]
     # batch_size = 10
 
-    input_size = [288, 384]
-    num_joints = 133
-    onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
-    heatmap_size = [72, 96]
-    batch_size = 10
-    batch_shape = (1, 3, 384, 288)
+    # input_size = [288, 384]
+    # num_joints = 133
+    # onnx_model_path = "data/onnx_export/wholebody_batch10_hrnet_w48_coco_wholebody_384x288_dark_plus.onnx"
+    # heatmap_size = [72, 96]
+    # batch_size = 1
+    # batch_shape = (1, 3, 384, 288)
+
+    input_size = [192, 256]
+    num_joints = 17
+    onnx_model_path = "body_topdownheatmap_batch1_hrnet_w32_coco_256x192_dynamic.onnx"
+    # heatmap_size = None
+    # batch_size = 3
+    heatmap_size = [48, 64]
+    # batch_shape = (batch_size, 3, 256, 192)
+    # out_shape = (batch_size, num_joints)
 
     pose_model = cv2.dnn.readNetFromONNX(onnx_model_path)
 
-    config_path = "yolo/model/yolov4.cfg"
+    config_path = "yolo/model/yolov4-obj-mycustom.cfg"
     meta_path = "yolo/model/obj.data"
     weight_path = "yolo/model/yolov4-obj-mycustom_best.weights"
     net_main, class_names, colors = load_network(config_path, meta_path, weight_path)
@@ -1120,9 +1129,10 @@ def main():
 
         person_results_x1y1x2y2 = yolo_inference(net_main, class_names, im)
 
-        blobs = [np.zeros(batch_shape)] * batch_size
-        centers = [np.zeros(2)] * batch_size
-        scales = [np.zeros(2)] * batch_size
+        # blobs = [np.zeros(batch_shape)] * batch_size
+        centers = [np.zeros(2)] * len(person_results_x1y1x2y2)
+        scales = [np.zeros(2)] * len(person_results_x1y1x2y2)
+        arr = np.zeros((len(person_results_x1y1x2y2), 3, 256, 192), int)
         for i, box in enumerate(person_results_x1y1x2y2):
             image_work = img.copy()
             box_c = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
@@ -1141,11 +1151,15 @@ def main():
 
             input_blob = np.moveaxis(image_work, -1, 0)  # [height, width, channels]->[channels, height, width]
             input_blob = input_blob[np.newaxis, :, :, :]  # Add "batch size" dimension.
-            blobs[i] = input_blob
 
-        blob_batch = np.concatenate(tuple(blobs))
+            arr[i] = input_blob
+            # arr = np.append(arr, np.array(input_blob), axis=0)
 
-        pose_model.setInput(blob_batch)  # Set input of model
+            # blobs[i] = input_blob
+
+        # blob_batch = np.concatenate(tuple(blobs))
+
+        pose_model.setInput(arr)  # Set input of model
 
         start = time()
         with torch.no_grad():
@@ -1164,7 +1178,7 @@ def main():
                 use_udp=False,
                 target_type='GaussianHeatmap')
 
-            all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
+            all_preds = np.zeros((len(person_results_x1y1x2y2), preds.shape[1], 3), dtype=np.float32)
             all_preds[:, :, 0:2] = preds[:, :, 0:2]
             all_preds[:, :, 2:3] = maxvals
 
@@ -1173,7 +1187,7 @@ def main():
             for box, preds in zip(person_results_x1y1x2y2, all_preds):
                 result.append({"bbox": np.array(box), "keypoints": preds})
 
-            image_orig = draw_skeleton(image_orig, result, 'wholebody')
+            image_orig = draw_skeleton(image_orig, result, num_joints)
 
             for i, p in enumerate(all_preds[0]):
                 result_keypoints.append(
@@ -1183,7 +1197,7 @@ def main():
 
             preds, maxvals = keypoints_from_regression(out, centers, scales, input_size)
 
-            all_preds = np.zeros((batch_size, preds.shape[1], 3), dtype=np.float32)
+            all_preds = np.zeros((len(person_results_x1y1x2y2), preds.shape[1], 3), dtype=np.float32)
             all_preds[:, :, 0:2] = preds[:, :, 0:2]
             all_preds[:, :, 2:3] = maxvals
 
@@ -1195,7 +1209,7 @@ def main():
             result = []
             for box, preds in zip(person_results_x1y1x2y2, all_preds):
                 result.append({"bbox": np.array(box), "keypoints": preds})
-            image_orig = draw_skeleton(image_orig, result, 'body')
+            image_orig = draw_skeleton(image_orig, result, num_joints)
 
         duration_frame += time() - start_frame
 
